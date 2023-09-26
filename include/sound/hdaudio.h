@@ -621,6 +621,9 @@ int snd_hdac_stream_set_lpib(struct hdac_stream *azx_dev, u32 value);
 #define snd_hdac_stream_readb_poll(dev, reg, val, cond, delay_us, timeout_us) \
 	readb_poll_timeout((dev)->sd_addr + AZX_REG_ ## reg, val, cond, \
 			   delay_us, timeout_us)
+#define snd_hdac_stream_readw_poll(dev, reg, val, cond, delay_us, timeout_us) \
+	readw_poll_timeout((dev)->sd_addr + AZX_REG_ ## reg, val, cond, \
+			   delay_us, timeout_us)
 #define snd_hdac_stream_readl_poll(dev, reg, val, cond, delay_us, timeout_us) \
 	readl_poll_timeout((dev)->sd_addr + AZX_REG_ ## reg, val, cond, \
 			   delay_us, timeout_us)
