@@ -72,9 +72,6 @@
 #CVE-2025-22127
 0012-f2fs-fix-potential-deadloop-in-prepare_compress_over.patch
 
-#CVE-2025-22126
-0013-md-fix-mddev-uaf-while-iterating-all_mddevs-list.patch
-
 #CVE-2025-22125
 0014-md-raid1-raid10-don-t-ignore-IO-flags.patch
 
