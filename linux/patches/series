@@ -149,3 +149,13 @@
 
 #CVE-2025-23129
 0040-wifi-ath11k-Clear-affinity-hint-before-calling-ath11.patch
+
+#CVE-2025-37746
+0001-perf-dwc_pcie-Qualify-RAS-DES-VSEC-Capability-by-Ven.patch
+0002-perf-dwc_pcie-fix-duplicate-pci_dev-devices.patch
+
+#CVE-2025-37743
+0003-wifi-ath12k-Avoid-memory-leak-while-enabling-statist.patch
+
+#CVE-2025-23155
+0004-net-stmmac-Fix-accessing-freed-irq-affinity_hint.patch
