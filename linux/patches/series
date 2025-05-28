@@ -94,9 +94,6 @@
 #CVE-2025-22103
 0021-net-fix-NULL-pointer-dereference-in-l3mdev_l3_rcv.patch
 
-#CVE-2025-22102
-0022-Bluetooth-btnxpuart-Fix-kernel-panic-during-FW-relea.patch
-
 #CVE-2025-22101
 0023-net-libwx-fix-Tx-L4-checksum.patch
 
@@ -156,6 +153,3 @@
 
 #CVE-2025-23155
 0004-net-stmmac-Fix-accessing-freed-irq-affinity_hint.patch
-
-#CVE-2025-37821
-0001-sched-eevdf-Fix-se-slice-being-set-to-U64_MAX-and-re.patch
