@@ -153,3 +153,9 @@
 
 #CVE-2025-23155
 0004-net-stmmac-Fix-accessing-freed-irq-affinity_hint.patch
+
+#CVE-2025-37984
+0001-crypto-ecdsa-Harden-against-integer-overflows-in-DIV.patch
+
+#CVE-2025-37906
+0001-ublk-fix-race-between-io_uring_cmd_complete_in_task-.patch
