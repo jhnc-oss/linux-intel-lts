@@ -530,7 +530,7 @@ static int ipu6_isys_fw_pin_cfg(struct ipu6_isys_video *av,
 	output_pin->csi_be_soc_pixel_remapping =
 		CSI_BE_SOC_PIXEL_REMAPPING_FLAG_NO_REMAPPING;
 
-	output_pin->snoopable = false;
+	output_pin->snoopable = true;
 	output_pin->error_handling_enable = false;
 	output_pin->sensor_type = isys->sensor_type++;
 	if (isys->sensor_type > isys->pdata->ipdata->sensor_type_end)
@@ -1371,6 +1371,7 @@ int ipu6_isys_video_init(struct ipu6_isys_video *av)
 	av->vdev.release = video_device_release_empty;
 	av->vdev.fops = &isys_fops;
 	av->vdev.v4l2_dev = &av->isys->v4l2_dev;
+	av->vdev.dev_parent = &av->isys->adev->isp->pdev->dev;
 	if (!av->vdev.ioctl_ops)
 		av->vdev.ioctl_ops = &ipu6_v4l2_ioctl_ops;
 	av->vdev.queue = &av->aq.vbq;

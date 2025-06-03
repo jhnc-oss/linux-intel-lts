@@ -123,13 +123,8 @@ static __always_inline void native_local_irq_restore(unsigned long flags)
 
 #endif
 
-#ifdef CONFIG_PARAVIRT_XXL
-#include <asm/paravirt.h>
-#else
+#ifndef CONFIG_PARAVIRT
 #ifndef __ASSEMBLY__
-#include <linux/types.h>
-#include <asm/irq_pipeline.h>
-
 /*
  * Used in the idle loop; sti takes one instruction cycle
  * to complete:
@@ -147,6 +142,15 @@ static __always_inline void halt(void)
 {
 	native_halt();
 }
+#endif /* __ASSEMBLY__ */
+#endif /* CONFIG_PARAVIRT */
+
+#ifdef CONFIG_PARAVIRT_XXL
+#include <asm/paravirt.h>
+#else
+#ifndef __ASSEMBLY__
+#include <linux/types.h>
+#include <asm/irq_pipeline.h>
 
 #else
 

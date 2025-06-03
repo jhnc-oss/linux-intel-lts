@@ -625,8 +625,8 @@ static u32 convert_ltr_scale(u32 val)
 static int pmc_core_ltr_show(struct seq_file *s, void *unused)
 {
 	struct pmc_dev *pmcdev = s->private;
-	u64 decoded_snoop_ltr, decoded_non_snoop_ltr;
-	u32 ltr_raw_data, scale, val;
+	u64 decoded_snoop_ltr, decoded_non_snoop_ltr, val;
+	u32 ltr_raw_data, scale;
 	u16 snoop_ltr, nonsnoop_ltr;
 	unsigned int i, index, ltr_index = 0;
 
@@ -1365,6 +1365,7 @@ static const struct x86_cpu_id intel_pmc_core_ids[] = {
 	X86_MATCH_VFM(INTEL_RAPTORLAKE_P,	tgl_l_core_init),
 	X86_MATCH_VFM(INTEL_RAPTORLAKE,		adl_core_init),
 	X86_MATCH_VFM(INTEL_RAPTORLAKE_S,	adl_core_init),
+	X86_MATCH_VFM(INTEL_BARTLETTLAKE,       adl_core_init),
 	X86_MATCH_VFM(INTEL_METEORLAKE_L,	mtl_core_init),
 	X86_MATCH_VFM(INTEL_ARROWLAKE,		arl_core_init),
 	X86_MATCH_VFM(INTEL_ARROWLAKE_H,	arl_h_core_init),
