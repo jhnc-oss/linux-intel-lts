@@ -151,7 +151,6 @@ static __always_inline void halt(void)
 #ifndef __ASSEMBLY__
 #include <linux/types.h>
 #include <asm/irq_pipeline.h>
-
 #else
 
 #ifdef CONFIG_X86_64
