@@ -78,12 +78,6 @@
 #CVE-2025-22124
 0015-md-md-bitmap-fix-wrong-bitmap_limit-for-clustermd-wh.patch
 
-#CVE-2025-22123
-0016-f2fs-fix-to-avoid-accessing-uninitialized-curseg.patch
-
-#CVE-2025-22122
-0017-block-fix-adding-folio-to-bio.patch
-
 #CVE-2025-22121
 0018-ext4-introduce-ITAIL-helper.patch
 0019-ext4-fix-out-of-bound-read-in-ext4_xattr_inode_dec_r.patch
