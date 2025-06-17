@@ -209,10 +209,6 @@
 0001-nfsd-move-nfserrno-to-vfs.c.patch
 0002-nfsd-map-the-EBADMSG-to-nfserr_io-to-avoid-warning.patch
 
-#CVE-2024-47678
-0001-icmp-Add-counters-for-rate-limits.patch
-0002-icmp-change-the-order-of-rate-limits.patch
-
 #CVE-2024-50003
 0001-drm-amd-display-Fix-system-hang-while-resume-with-TB.patch
 
