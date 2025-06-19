@@ -1,0 +1,83 @@
+From d8408d4e71c58c2ad561850fd86c9a0a8d429a02 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Thomas=20Wei=C3=9Fschuh?= <linux@weissschuh.net>
+Date: Fri, 23 Dec 2022 21:30:19 +0000
+Subject: [PATCH 02/14] HID: use standard debug APIs
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+The custom "debug" module parameter is fairly inflexible.
+It can only manage debugging for all calls dbg_hid() at the same time.
+
+Furthermore it creates a mismatch between calls to hid_dbg() which can
+be managed by CONFIG_DYNAMIC_DEBUG and dbg_hid() which is managed by the
+module parameter.
+
+Furthermore the change to pr_debug() allows the debugging statements to
+be completely compiled-out if desired.
+
+Signed-off-by: Thomas Weißschuh <linux@weissschuh.net>
+Tested-by: Bastien Nocera <hadess@hadess.net>
+Link: https://lore.kernel.org/r/20221223-hid-dbg-v1-1-5dcf8794f7f9@weissschuh.net
+Signed-off-by: Benjamin Tissoires <benjamin.tissoires@redhat.com>
+---
+ drivers/hid/hid-core.c | 9 ---------
+ include/linux/hid.h    | 8 +-------
+ 2 files changed, 1 insertion(+), 16 deletions(-)
+
+diff --git a/drivers/hid/hid-core.c b/drivers/hid/hid-core.c
+index 54b96c4ea3fd..75caf90ef9a4 100644
+--- a/drivers/hid/hid-core.c
++++ b/drivers/hid/hid-core.c
+@@ -42,11 +42,6 @@
+ 
+ #define DRIVER_DESC "HID core driver"
+ 
+-int hid_debug = 0;
+-module_param_named(debug, hid_debug, int, 0600);
+-MODULE_PARM_DESC(debug, "toggle HID debugging messages");
+-EXPORT_SYMBOL_GPL(hid_debug);
+-
+ static int hid_ignore_special_drivers = 0;
+ module_param_named(ignore_special_drivers, hid_ignore_special_drivers, int, 0600);
+ MODULE_PARM_DESC(ignore_special_drivers, "Ignore any special drivers and handle all devices by generic driver");
+@@ -2607,10 +2602,6 @@ static int __init hid_init(void)
+ {
+ 	int ret;
+ 
+-	if (hid_debug)
+-		pr_warn("hid_debug is now used solely for parser and driver debugging.\n"
+-			"debugfs is now used for inspecting the device (report descriptor, reports)\n");
+-
+ 	ret = bus_register(&hid_bus_type);
+ 	if (ret) {
+ 		pr_err("can't register hid bus\n");
+diff --git a/include/linux/hid.h b/include/linux/hid.h
+index 92965bcb800d..4750c8fd7dc0 100644
+--- a/include/linux/hid.h
++++ b/include/linux/hid.h
+@@ -865,8 +865,6 @@ static inline bool hid_is_usb(struct hid_device *hdev)
+ 
+ /* HID core API */
+ 
+-extern int hid_debug;
+-
+ extern bool hid_ignore(struct hid_device *);
+ extern int hid_add_device(struct hid_device *);
+ extern void hid_destroy_device(struct hid_device *);
+@@ -1215,11 +1213,7 @@ int hid_pidff_init(struct hid_device *hid);
+ #define hid_pidff_init NULL
+ #endif
+ 
+-#define dbg_hid(fmt, ...)						\
+-do {									\
+-	if (hid_debug)							\
+-		printk(KERN_DEBUG "%s: " fmt, __FILE__, ##__VA_ARGS__);	\
+-} while (0)
++#define dbg_hid(fmt, ...) pr_debug("%s: " fmt, __FILE__, ##__VA_ARGS__)
+ 
+ #define hid_err(hid, fmt, ...)				\
+ 	dev_err(&(hid)->dev, fmt, ##__VA_ARGS__)
+-- 
+2.42.0
+

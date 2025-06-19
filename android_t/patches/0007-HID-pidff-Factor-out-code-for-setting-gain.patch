@@ -1,0 +1,78 @@
+From b1c6d1689ee0b0f7737882da24da61c17fb1d886 Mon Sep 17 00:00:00 2001
+From: =?UTF-8?q?Tomasz=20Paku=C5=82a?= <tomasz.pakula.oficjalny@gmail.com>
+Date: Sat, 1 Feb 2025 12:39:01 +0100
+Subject: [PATCH 07/14] HID: pidff: Factor out code for setting gain
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+Makes it possible to easily set gain from inside hid-pidff.c
+
+Changes in v7:
+- Check if device gain field exists before setting device gain
+
+Signed-off-by: Tomasz Pakuła <tomasz.pakula.oficjalny@gmail.com>
+Reviewed-by: Michał Kopeć <michal@nozomi.space>
+Reviewed-by: Paul Dino Jones <paul@spacefreak18.xyz>
+Tested-by: Paul Dino Jones <paul@spacefreak18.xyz>
+Tested-by: Cristóferson Bueno <cbueno81@gmail.com>
+Tested-by: Pablo Cisneros <patchkez@protonmail.com>
+Signed-off-by: Jiri Kosina <jkosina@suse.com>
+---
+ drivers/hid/usbhid/hid-pidff.c | 26 +++++++++++++++-----------
+ 1 file changed, 15 insertions(+), 11 deletions(-)
+
+diff --git a/drivers/hid/usbhid/hid-pidff.c b/drivers/hid/usbhid/hid-pidff.c
+index 7cf93af50fdc..316cc6a64be5 100644
+--- a/drivers/hid/usbhid/hid-pidff.c
++++ b/drivers/hid/usbhid/hid-pidff.c
+@@ -480,6 +480,19 @@ static int pidff_needs_set_ramp(struct ff_effect *effect, struct ff_effect *old)
+ 	       effect->u.ramp.end_level != old->u.ramp.end_level;
+ }
+ 
++/*
++ * Set device gain
++ */
++static void pidff_set_gain_report(struct pidff_device *pidff, u16 gain)
++{
++	if (!pidff->device_gain[PID_DEVICE_GAIN_FIELD].field)
++		return;
++
++	pidff_set(&pidff->device_gain[PID_DEVICE_GAIN_FIELD], gain);
++	hid_hw_request(pidff->hid, pidff->reports[PID_DEVICE_GAIN],
++			HID_REQ_SET_REPORT);
++}
++
+ /*
+  * Clear device control report
+  */
+@@ -825,11 +838,7 @@ static int pidff_upload_effect(struct input_dev *dev, struct ff_effect *effect,
+  */
+ static void pidff_set_gain(struct input_dev *dev, u16 gain)
+ {
+-	struct pidff_device *pidff = dev->ff->private;
+-
+-	pidff_set(&pidff->device_gain[PID_DEVICE_GAIN_FIELD], gain);
+-	hid_hw_request(pidff->hid, pidff->reports[PID_DEVICE_GAIN],
+-			HID_REQ_SET_REPORT);
++	pidff_set_gain_report(dev->ff->private, gain);
+ }
+ 
+ static void pidff_autocenter(struct pidff_device *pidff, u16 magnitude)
+@@ -1367,12 +1376,7 @@ int hid_pidff_init_with_quirks(struct hid_device *hid, __u32 initial_quirks)
+ 	if (error)
+ 		goto fail;
+ 
+-	if (test_bit(FF_GAIN, dev->ffbit)) {
+-		pidff_set(&pidff->device_gain[PID_DEVICE_GAIN_FIELD], 0xffff);
+-		hid_hw_request(hid, pidff->reports[PID_DEVICE_GAIN],
+-				     HID_REQ_SET_REPORT);
+-	}
+-
++	pidff_set_gain_report(pidff, 0xffff);
+ 	error = pidff_check_autocenter(pidff, dev);
+ 	if (error)
+ 		goto fail;
+-- 
+2.42.0
+

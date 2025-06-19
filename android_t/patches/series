@@ -535,3 +535,23 @@
 
 #CVE-2025-37807
 0026-bpf-Fix-kmemleak-warning-for-percpu-hashmap.patch
+
+#CVE-2025-37932
+0001-sch_htb-make-htb_qlen_notify-idempotent.patch
+
+#CVE-2025-37942
+0001-HID-pidff-Stop-all-effects-before-enabling-actuators.patch
+0002-HID-use-standard-debug-APIs.patch
+0003-HID-pidff-Add-MISSING_DELAY-quirk-and-its-detection.patch
+0004-HID-pidff-Clamp-PERIODIC-effect-period-to-device-s-l.patch
+0005-HID-pidff-Add-hid_pidff_init_with_quirks-and-export-.patch
+0006-HID-pidff-Completely-rework-and-fix-pidff_reset-func.patch
+0007-HID-pidff-Factor-out-code-for-setting-gain.patch
+0008-HID-pidff-Rescale-time-values-to-match-field-units.patch
+0009-HID-pidff-Simplify-pidff_rescale_signed.patch
+0010-HID-pidff-Add-PERMISSIVE_CONTROL-quirk.patch
+0011-HID-pidff-Add-FIX_WHEEL_DIRECTION-quirk.patch
+0012-HID-pidff-Use-macros-instead-of-hardcoded-min-max-va.patch
+0013-HID-pidff-Factor-out-pool-report-fetch-and-remove-ex.patch
+0014-HID-pidff-Make-sure-to-fetch-pool-before-checking-SI.patch
+
