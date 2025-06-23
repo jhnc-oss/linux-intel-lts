@@ -1890,18 +1890,10 @@ int f2fs_issue_checkpoint(struct f2fs_sb_info *sbi)
 	if (waitqueue_active(&cprc->ckpt_wait_queue))
 		wake_up(&cprc->ckpt_wait_queue);
 
-	if (cprc->f2fs_issue_ckpt) {
-		bool prio_changed = false;
-		int saved_prio;
-
-		trace_android_vh_f2fs_improve_priority(cprc->f2fs_issue_ckpt, &saved_prio,
-						&prio_changed);
+	if (cprc->f2fs_issue_ckpt)
 		wait_for_completion(&req.wait);
-		if (prio_changed)
-			trace_android_vh_f2fs_restore_priority(cprc->f2fs_issue_ckpt, saved_prio);
-	} else {
+	else
 		flush_remained_ckpt_reqs(sbi, &req);
-	}
 
 	return req.ret;
 }
