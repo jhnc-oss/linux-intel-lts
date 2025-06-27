@@ -66,9 +66,6 @@
 0009-f2fs-decrease-spare-area-for-pinned-files-for-zoned-.patch
 0010-f2fs-fix-to-avoid-panic-once-fallocation-fails-for-p.patch
 
-#CVE-2025-23128
-0011-wifi-ath12k-Clear-affinity-hint-before-calling-ath12.patch
-
 #CVE-2025-22127
 0012-f2fs-fix-potential-deadloop-in-prepare_compress_over.patch
 
