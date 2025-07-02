@@ -150,3 +150,22 @@
 
 #CVE-2025-37906
 0001-ublk-fix-race-between-io_uring_cmd_complete_in_task-.patch
+
+#CVE-2025-38067
+0001-rseq-Validate-read-only-fields-under-DEBUG_RSEQ-conf.patch
+0002-rseq-Fix-rseq-unregistration-regression.patch
+0003-rseq-Update-kernel-fields-in-lockstep-with-CONFIG_DE.patch
+0004-rseq-Fix-rseq-registration-with-CONFIG_DEBUG_RSEQ.patch
+0005-rseq-Fix-segfault-on-registration-when-rseq_cs-is-no.patch
+
+#CVE-2025-38064
+0001-virtio-hookup-irq_get_affinity-callback.patch
+0002-virtio-break-and-reset-virtio-devices-on-device_shut.patch
+
+#CVE-2025-38041
+0001-clk-sunxi-ng-h616-Add-sigma-delta-modulation-setting.patch
+0002-clk-sunxi-ng-h616-Reparent-CPU-clock-during-frequenc.patch
+0003-clk-sunxi-ng-h616-Reparent-GPU-clock-during-frequenc.patch
+
+#CVE-2025-38029
+0001-kasan-avoid-sleepable-page-allocation-from-atomic-co.patch
