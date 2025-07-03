@@ -50,9 +50,6 @@
 0003-sfc-rip-out-MDIO-support.patch
 0004-sfc-fix-NULL-dereferences-in-ef100_process_design_pa.patch
 
-#CVE-2025-23137
-0005-cpufreq-amd-pstate-Add-missing-NULL-ptr-check-in-amd.patch
-
 #CVE-2025-23133
 0006-wifi-ath11k-update-channel-list-in-reg-notifier-inst.patch
 
