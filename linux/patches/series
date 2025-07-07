@@ -1,10 +1,6 @@
 #CVE-2024-57995
 0001-wifi-ath12k-fix-read-pointer-after-free-in-ath12k_ma.patch
 
-#CVE-2024-57976
-0002-btrfs-simplify-range-tracking-in-cow_file_range.patch
-0003-btrfs-do-proper-folio-cleanup-when-cow_file_range-fa.patch
-
 #CVE-2024-52560
 0004-fs-ntfs3-Add-more-checks-in-mi_enum_attr-part-2.patch
 0005-fs-ntfs3-Mark-inode-as-bad-as-soon-as-error-detected.patch
@@ -82,9 +78,6 @@
 #CVE-2025-22103
 0021-net-fix-NULL-pointer-dereference-in-l3mdev_l3_rcv.patch
 
-#CVE-2025-22101
-0023-net-libwx-fix-Tx-L4-checksum.patch
-
 #CVE-2024-58097
 0024-wifi-ath11k-fix-RCU-stall-while-reaping-monitor-dest.patch
 
@@ -138,9 +131,6 @@
 
 #CVE-2025-37743
 0003-wifi-ath12k-Avoid-memory-leak-while-enabling-statist.patch
-
-#CVE-2025-23155
-0004-net-stmmac-Fix-accessing-freed-irq-affinity_hint.patch
 
 #CVE-2025-37984
 0001-crypto-ecdsa-Harden-against-integer-overflows-in-DIV.patch
