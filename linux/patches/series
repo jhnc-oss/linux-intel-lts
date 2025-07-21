@@ -189,3 +189,6 @@
 
 #CVE-2025-38207
 0022-mm-fix-uprobe-pte-be-overwritten-when-expanding-vma.patch
+
+#CVE-2025-38351
+0001-KVM-x86-hyper-v-Skip-non-canonical-addresses-during-.patch
