@@ -56,7 +56,6 @@
 0008-dlm-prevent-NPD-when-writing-a-positive-value-to-eve.patch
 
 #CVE-2025-23130
-0009-f2fs-decrease-spare-area-for-pinned-files-for-zoned-.patch
 0010-f2fs-fix-to-avoid-panic-once-fallocation-fails-for-p.patch
 
 #CVE-2025-22127
@@ -132,18 +131,8 @@
 #CVE-2025-37743
 0003-wifi-ath12k-Avoid-memory-leak-while-enabling-statist.patch
 
-#CVE-2025-37984
-0001-crypto-ecdsa-Harden-against-integer-overflows-in-DIV.patch
-
 #CVE-2025-37906
 0001-ublk-fix-race-between-io_uring_cmd_complete_in_task-.patch
-
-#CVE-2025-38067
-0001-rseq-Validate-read-only-fields-under-DEBUG_RSEQ-conf.patch
-0002-rseq-Fix-rseq-unregistration-regression.patch
-0003-rseq-Update-kernel-fields-in-lockstep-with-CONFIG_DE.patch
-0004-rseq-Fix-rseq-registration-with-CONFIG_DEBUG_RSEQ.patch
-0005-rseq-Fix-segfault-on-registration-when-rseq_cs-is-no.patch
 
 #CVE-2025-38064
 0001-virtio-hookup-irq_get_affinity-callback.patch
@@ -164,9 +153,6 @@
 
 #CVE-2025-38248
 0004-bridge-mcast-Fix-use-after-free-during-router-port-c.patch
-
-#CVE-2025-38242
-0005-mm-userfaultfd-fix-race-of-userfaultfd_move-and-swap.patch
 
 #CVE-2025-38234
 0006-sched-rt-Fix-race-in-push_rt_task.patch
@@ -192,18 +178,11 @@
 0014-wifi-rtw89-pci-disable-PCI-completion-timeout-contro.patch
 0015-wifi-rtw89-pci-configure-manual-DAC-mode-via-PCI-con.patch
 
-#CVE-2025-38139
-0016-netfs-Fix-oops-in-write-retry-from-mis-resetting-the.patch
-
 #CVE-2025-38137
 0017-PCI-pwrctrl-Cancel-outstanding-rescan-work-when-unre.patch
 
 #CVE-2025-38311
 0018-iavf-get-rid-of-the-crit-lock.patch
-
-#CVE-2025-38279
-0019-bpf-Do-not-include-stack-ptr-register-in-precision-b.patch
-0020-bpf-use-common-instruction-history-across-all-states.patch
 
 #CVE-2025-38105
 0021-ALSA-usb-audio-Kill-timer-properly-at-removal.patch
