@@ -95,9 +95,6 @@
 #CVE-2025-22116
 0029-idpf-check-error-for-register_netdev-on-init.patch
 
-#CVE-2025-22115
-0030-btrfs-fix-block-group-refcount-race-in-btrfs_create_.patch
-
 #CVE-2025-22113
 0031-ext4-define-ext4_journal_destroy-wrapper.patch
 0032-ext4-avoid-journaling-sb-update-on-error-if-journal-.patch
