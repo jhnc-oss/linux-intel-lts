@@ -218,9 +218,6 @@
 #CVE-2024-27389
 0001-pstore-inode-Only-d_invalidate-is-needed.patch
 
-#CVE-2022-48703
-0001-thermal-int340x_thermal-handle-data_vault-when-the-v.patch
-
 #CVE-2023-52676
 0001-bpf-Guard-stack-limits-against-32bit-overflow.patch
 
@@ -409,9 +406,6 @@
 0068-workqueue-Add-rcu-lock-check-at-the-end-of-work-item.patch
 0069-workqueue-Update-lock-debugging-code.patch
 0070-workqueue-Do-not-warn-when-cancelling-WQ_MEM_RECLAIM.patch
-
-#CVE-2024-57883
-0071-mm-hugetlb-independent-PMD-page-table-shared-count.patch
 
 #CVE-2024-52559
 0072-drm-msm-gem-prevent-integer-overflow-in-msm_ioctl_ge.patch
