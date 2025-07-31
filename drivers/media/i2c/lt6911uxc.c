@@ -168,7 +168,7 @@ static int lt6911uxc_status_update(struct lt6911uxc *lt6911uxc)
 	u64 int_event;
 	u64 byte_clock;
 	u64 tmds_clk;
-	u64 pixel_clk, is_hdmi_2_0, fps, lanes;
+	u64 pixel_clk, is_hdmi_2_0, fps = 0, lanes;
 	u64 htotal, vtotal, half_width, height;
 	int ret = 0;
 
