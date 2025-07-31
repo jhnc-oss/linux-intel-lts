@@ -32,8 +32,8 @@ Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
  drivers/tty/n_gsm.c | 391 ++++++++++++++++++++++++++++++--------------
  1 file changed, 269 insertions(+), 122 deletions(-)
 
-diff --git a/drivers/tty/n_gsm.c b/drivers/tty/n_gsm.c
-index aae9f73585bd..ddaa6d99db05 100644
+Index: b/drivers/tty/n_gsm.c
+===================================================================
 --- a/drivers/tty/n_gsm.c
 +++ b/drivers/tty/n_gsm.c
 @@ -212,6 +212,9 @@ struct gsm_mux {
@@ -68,7 +68,7 @@ index aae9f73585bd..ddaa6d99db05 100644
  
  /**
   *	gsm_fcs_add	-	update FCS
-@@ -661,53 +670,73 @@ static int gsm_stuff_frame(const u8 *input, u8 *output, int len)
+@@ -661,53 +670,73 @@ static int gsm_stuff_frame(const u8 *inp
   *	@cr: command/response bit seen as initiator
   *	@control:  control byte including PF bit
   *
@@ -181,11 +181,10 @@ index aae9f73585bd..ddaa6d99db05 100644
  }
  
  /**
-@@ -769,6 +798,45 @@ static struct gsm_msg *gsm_data_alloc(struct gsm_mux *gsm, u8 addr, int len,
- 	return m;
+@@ -770,6 +799,45 @@ static struct gsm_msg *gsm_data_alloc(st
  }
  
-+/**
+ /**
 + *	gsm_send_packet	-	sends a single packet
 + *	@gsm: GSM Mux
 + *	@msg: packet to send
@@ -224,10 +223,11 @@ index aae9f73585bd..ddaa6d99db05 100644
 +	return 0;
 +}
 +
- /**
++/**
   *	gsm_is_flow_ctrl_msg	-	checks if flow control message
   *	@msg: message to check
-@@ -801,59 +869,81 @@ static bool gsm_is_flow_ctrl_msg(struct gsm_msg *msg)
+  *
+@@ -801,59 +869,81 @@ static bool gsm_is_flow_ctrl_msg(struct
  }
  
  /**
@@ -347,7 +347,7 @@ index aae9f73585bd..ddaa6d99db05 100644
  }
  
  /**
-@@ -902,9 +992,21 @@ static void __gsm_data_queue(struct gsm_dlci *dlci, struct gsm_msg *msg)
+@@ -902,9 +992,21 @@ static void __gsm_data_queue(struct gsm_
  	msg->data = dp;
  
  	/* Add to the actual output queue */
@@ -371,7 +371,7 @@ index aae9f73585bd..ddaa6d99db05 100644
  	mod_timer(&gsm->kick_timer, jiffies + 10 * gsm->t1 * HZ / 100);
  }
  
-@@ -1131,32 +1233,39 @@ static int gsm_dlci_modem_output(struct gsm_mux *gsm, struct gsm_dlci *dlci,
+@@ -1131,32 +1233,39 @@ static int gsm_dlci_modem_output(struct
  
  static int gsm_dlci_data_sweep(struct gsm_mux *gsm)
  {
@@ -433,7 +433,7 @@ index aae9f73585bd..ddaa6d99db05 100644
  
  	return ret;
  }
-@@ -1405,7 +1514,6 @@ static void gsm_control_message(struct gsm_mux *gsm, unsigned int command,
+@@ -1405,7 +1514,6 @@ static void gsm_control_message(struct g
  						const u8 *data, int clen)
  {
  	u8 buf[1];
@@ -441,7 +441,7 @@ index aae9f73585bd..ddaa6d99db05 100644
  	struct gsm_dlci *dlci;
  	int i;
  	int address;
-@@ -1440,9 +1548,7 @@ static void gsm_control_message(struct gsm_mux *gsm, unsigned int command,
+@@ -1440,9 +1548,7 @@ static void gsm_control_message(struct g
  		gsm->constipated = false;
  		gsm_control_reply(gsm, CMD_FCON, NULL, 0);
  		/* Kick the link in case it is idling */
@@ -452,7 +452,7 @@ index aae9f73585bd..ddaa6d99db05 100644
  		break;
  	case CMD_FCOFF:
  		/* Modem wants us to STFU */
-@@ -1645,8 +1751,6 @@ static int gsm_control_wait(struct gsm_mux *gsm, struct gsm_control *control)
+@@ -1645,8 +1751,6 @@ static int gsm_control_wait(struct gsm_m
  
  static void gsm_dlci_close(struct gsm_dlci *dlci)
  {
@@ -461,7 +461,7 @@ index aae9f73585bd..ddaa6d99db05 100644
  	del_timer(&dlci->t1);
  	if (debug & 8)
  		pr_debug("DLCI %d goes closed.\n", dlci->addr);
-@@ -1655,17 +1759,16 @@ static void gsm_dlci_close(struct gsm_dlci *dlci)
+@@ -1655,17 +1759,16 @@ static void gsm_dlci_close(struct gsm_dl
  	dlci->constipated = true;
  	if (dlci->addr != 0) {
  		tty_port_tty_hangup(&dlci->port, false);
@@ -482,7 +482,7 @@ index aae9f73585bd..ddaa6d99db05 100644
  }
  
  /**
-@@ -1688,6 +1791,7 @@ static void gsm_dlci_open(struct gsm_dlci *dlci)
+@@ -1688,6 +1791,7 @@ static void gsm_dlci_open(struct gsm_dlc
  	/* Send current modem state */
  	if (dlci->addr)
  		gsm_modem_update(dlci, 0);
@@ -490,7 +490,7 @@ index aae9f73585bd..ddaa6d99db05 100644
  	wake_up(&dlci->gsm->event);
  }
  
-@@ -2325,7 +2429,7 @@ static void gsm1_receive(struct gsm_mux *gsm, unsigned char c)
+@@ -2325,7 +2429,7 @@ static void gsm1_receive(struct gsm_mux
  	} else if ((c & ISO_IEC_646_MASK) == XOFF) {
  		gsm->constipated = false;
  		/* Kick the link in case it is idling */
@@ -499,7 +499,7 @@ index aae9f73585bd..ddaa6d99db05 100644
  		return;
  	}
  	if (c == GSM1_SOF) {
-@@ -2460,6 +2564,9 @@ static void gsm_cleanup_mux(struct gsm_mux *gsm, bool disc)
+@@ -2461,6 +2565,9 @@ static void gsm_cleanup_mux(struct gsm_m
  	del_timer_sync(&gsm->kick_timer);
  	del_timer_sync(&gsm->t2_timer);
  
@@ -509,22 +509,22 @@ index aae9f73585bd..ddaa6d99db05 100644
  	/* Free up any link layer users and finally the control channel */
  	if (gsm->has_devices) {
  		gsm_unregister_devices(gsm_tty_driver, gsm->num);
-@@ -2471,9 +2578,12 @@ static void gsm_cleanup_mux(struct gsm_mux *gsm, bool disc)
- 	mutex_unlock(&gsm->mutex);
- 	/* Now wipe the queues */
+@@ -2474,9 +2581,12 @@ static void gsm_cleanup_mux(struct gsm_m
  	tty_ldisc_flush(gsm->tty);
+ 
+ 	spin_lock_irqsave(&gsm->tx_lock, flags);
 -	list_for_each_entry_safe(txq, ntxq, &gsm->tx_list, list)
 +	list_for_each_entry_safe(txq, ntxq, &gsm->tx_ctrl_list, list)
- 		kfree(txq);
--	INIT_LIST_HEAD(&gsm->tx_list);
++		kfree(txq);
 +	INIT_LIST_HEAD(&gsm->tx_ctrl_list);
 +	list_for_each_entry_safe(txq, ntxq, &gsm->tx_data_list, list)
-+		kfree(txq);
+ 		kfree(txq);
+-	INIT_LIST_HEAD(&gsm->tx_list);
 +	INIT_LIST_HEAD(&gsm->tx_data_list);
+ 	spin_unlock_irqrestore(&gsm->tx_lock, flags);
  }
  
- /**
-@@ -2496,6 +2606,7 @@ static int gsm_activate_mux(struct gsm_mux *gsm)
+@@ -2500,6 +2610,7 @@ static int gsm_activate_mux(struct gsm_m
  
  	timer_setup(&gsm->kick_timer, gsm_kick_timer, 0);
  	timer_setup(&gsm->t2_timer, gsm_control_retransmit, 0);
@@ -532,7 +532,7 @@ index aae9f73585bd..ddaa6d99db05 100644
  	init_waitqueue_head(&gsm->event);
  	spin_lock_init(&gsm->control_lock);
  	spin_lock_init(&gsm->tx_lock);
-@@ -2602,7 +2713,8 @@ static struct gsm_mux *gsm_alloc_mux(void)
+@@ -2606,7 +2717,8 @@ static struct gsm_mux *gsm_alloc_mux(voi
  	spin_lock_init(&gsm->lock);
  	mutex_init(&gsm->mutex);
  	kref_init(&gsm->ref);
@@ -542,7 +542,7 @@ index aae9f73585bd..ddaa6d99db05 100644
  
  	gsm->t1 = T1;
  	gsm->t2 = T2;
-@@ -2902,6 +3014,7 @@ static int gsmld_open(struct tty_struct *tty)
+@@ -2906,6 +3018,7 @@ static int gsmld_open(struct tty_struct
  
  	timer_setup(&gsm->kick_timer, gsm_kick_timer, 0);
  	timer_setup(&gsm->t2_timer, gsm_control_retransmit, 0);
@@ -550,7 +550,7 @@ index aae9f73585bd..ddaa6d99db05 100644
  
  	return 0;
  }
-@@ -2918,16 +3031,50 @@ static int gsmld_open(struct tty_struct *tty)
+@@ -2922,16 +3035,50 @@ static int gsmld_open(struct tty_struct
  static void gsmld_write_wakeup(struct tty_struct *tty)
  {
  	struct gsm_mux *gsm = tty->disc_data;
@@ -607,6 +607,3 @@ index aae9f73585bd..ddaa6d99db05 100644
  }
  
  /**
--- 
-2.43.0
-
