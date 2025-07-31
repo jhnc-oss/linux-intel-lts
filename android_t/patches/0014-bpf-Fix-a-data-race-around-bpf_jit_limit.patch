@@ -1,0 +1,33 @@
+From 745fc58eefa83b7f840954986f2e5260a6a05388 Mon Sep 17 00:00:00 2001
+From: Kuniyuki Iwashima <kuniyu@amazon.com>
+Date: Tue, 23 Aug 2022 14:58:04 -0700
+Subject: [PATCH 14/23] bpf: Fix a data-race around bpf_jit_limit.
+
+While reading bpf_jit_limit, it can be changed concurrently via sysctl,
+WRITE_ONCE() in __do_proc_doulongvec_minmax(). The size of bpf_jit_limit
+is long, so we need to add a paired READ_ONCE() to avoid load-tearing.
+
+Fixes: ede95a63b5e8 ("bpf: add bpf_jit_limit knob to restrict unpriv allocations")
+Signed-off-by: Kuniyuki Iwashima <kuniyu@amazon.com>
+Signed-off-by: Daniel Borkmann <daniel@iogearbox.net>
+Link: https://lore.kernel.org/bpf/20220823215804.2177-1-kuniyu@amazon.com
+---
+ kernel/bpf/core.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/kernel/bpf/core.c b/kernel/bpf/core.c
+index 1ded3eb492b8..e8e6e13c6f04 100644
+--- a/kernel/bpf/core.c
++++ b/kernel/bpf/core.c
+@@ -846,7 +846,7 @@ pure_initcall(bpf_jit_charge_init);
+ int bpf_jit_charge_modmem(u32 pages)
+ {
+ 	if (atomic_long_add_return(pages, &bpf_jit_current) >
+-	    (bpf_jit_limit >> PAGE_SHIFT)) {
++	    READ_ONCE(bpf_jit_limit) >> PAGE_SHIFT) {
+ 		if (!bpf_capable()) {
+ 			atomic_long_sub(pages, &bpf_jit_current);
+ 			return -EPERM;
+-- 
+2.43.0
+

@@ -1,0 +1,50 @@
+From 39979aa3cb9ee73a2a5ea422e211e9c457464e33 Mon Sep 17 00:00:00 2001
+From: Philip Redkin <me@rarity.fan>
+Date: Fri, 15 Nov 2024 20:36:59 +0300
+Subject: [PATCH 18/23] x86/mm: Check return value from
+ memblock_phys_alloc_range()
+
+At least with CONFIG_PHYSICAL_START=0x100000, if there is < 4 MiB of
+contiguous free memory available at this point, the kernel will crash
+and burn because memblock_phys_alloc_range() returns 0 on failure,
+which leads memblock_phys_free() to throw the first 4 MiB of physical
+memory to the wolves.
+
+At a minimum it should fail gracefully with a meaningful diagnostic,
+but in fact everything seems to work fine without the weird reserve
+allocation.
+
+Signed-off-by: Philip Redkin <me@rarity.fan>
+Signed-off-by: Ingo Molnar <mingo@kernel.org>
+Cc: Dave Hansen <dave.hansen@linux.intel.com>
+Cc: Rik van Riel <riel@surriel.com>
+Cc: "H. Peter Anvin" <hpa@zytor.com>
+Link: https://lore.kernel.org/r/94b3e98f-96a7-3560-1f76-349eb95ccf7f@rarity.fan
+---
+ arch/x86/mm/init.c | 10 ++++++++--
+ 1 file changed, 8 insertions(+), 2 deletions(-)
+
+diff --git a/arch/x86/mm/init.c b/arch/x86/mm/init.c
+index 49cadcbd5bea..43105395fc88 100644
+--- a/arch/x86/mm/init.c
++++ b/arch/x86/mm/init.c
+@@ -661,8 +661,14 @@ static void __init memory_map_top_down(unsigned long map_start,
+ 	 */
+ 	addr = memblock_phys_alloc_range(PMD_SIZE, PMD_SIZE, map_start,
+ 					 map_end);
+-	memblock_free(addr, PMD_SIZE);
+-	real_end = addr + PMD_SIZE;
++
++	if (!addr) {
++		pr_warn("Failed to release memory for alloc_low_pages()");
++		real_end = max(map_start, ALIGN_DOWN(map_end, PMD_SIZE));
++	} else {
++		memblock_free(addr, PMD_SIZE);
++		real_end = addr + PMD_SIZE;
++	}
+ 
+ 	/* step_size need to be small so pgt_buf from BRK could cover it */
+ 	step_size = PMD_SIZE;
+-- 
+2.43.0
+
