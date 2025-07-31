@@ -503,7 +503,7 @@ static int ar0234_set_ctrl(struct v4l2_ctrl *ctrl)
 		break;
 
 	case V4L2_CID_HFLIP:
-	case V4L2_CID_VFLIP:
+	case V4L2_CID_VFLIP: {
 		u64 reg;
 
 		ret = cci_read(ar0234->regmap, AR0234_REG_ORIENTATION,
@@ -521,7 +521,7 @@ static int ar0234_set_ctrl(struct v4l2_ctrl *ctrl)
 		ret = cci_write(ar0234->regmap, AR0234_REG_ORIENTATION,
 				reg, NULL);
 		break;
-
+	}
 	case V4L2_CID_TEST_PATTERN:
 		ret = cci_write(ar0234->regmap, AR0234_REG_TEST_PATTERN,
 				ar0234_test_pattern_val[ctrl->val], NULL);
