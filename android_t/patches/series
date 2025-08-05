@@ -549,9 +549,6 @@
 0013-HID-pidff-Factor-out-pool-report-fetch-and-remove-ex.patch
 0014-HID-pidff-Make-sure-to-fetch-pool-before-checking-SI.patch
 
-#CVE-2022-49980
-0001-USB-gadget-Fix-use-after-free-Read-in-usb_udc_uevent.patch
-
 #CVE-2025-38333
 0002-f2fs-fix-to-bail-out-in-get_new_segment.patch
 
