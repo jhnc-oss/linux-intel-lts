@@ -19,6 +19,7 @@
 #![feature(inline_const)]
 #![feature(lint_reasons)]
 #![feature(unsize)]
+#![feature(used_with_arg)]
 
 // Ensure conditional compilation based on the kernel configuration works;
 // otherwise we may silently break things like initcall handling.
@@ -52,6 +53,7 @@ pub mod mm;
 pub mod net;
 pub mod page;
 pub mod page_size_compat;
+pub mod pid_namespace;
 pub mod prelude;
 pub mod print;
 pub mod rbtree;
