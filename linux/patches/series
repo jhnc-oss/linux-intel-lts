@@ -39,9 +39,6 @@
 #CVE-2025-40325
 0001-md-raid10-wait-barrier-before-returning-discard-requ.patch
 
-#CVE-2025-37925
-0002-jfs-reject-on-disk-inodes-of-an-unsupported-type.patch
-
 #CVE-2025-37860
 0003-sfc-rip-out-MDIO-support.patch
 0004-sfc-fix-NULL-dereferences-in-ef100_process_design_pa.patch
@@ -186,6 +183,3 @@
 
 #CVE-2025-38207
 0022-mm-fix-uprobe-pte-be-overwritten-when-expanding-vma.patch
-
-#CVE-2025-38351
-0001-KVM-x86-hyper-v-Skip-non-canonical-addresses-during-.patch
