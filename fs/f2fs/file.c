@@ -627,6 +627,8 @@ static int f2fs_file_open(struct inode *inode, struct file *filp)
 	filp->f_mode |= FMODE_NOWAIT;
 	filp->f_mode |= FMODE_CAN_ODIRECT;
 
+	trace_android_vh_f2fs_file_open(inode, filp);
+
 	err = dquot_file_open(inode, filp);
 	if (err)
 		return err;
