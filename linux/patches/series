@@ -183,3 +183,7 @@
 
 #CVE-2025-38207
 0022-mm-fix-uprobe-pte-be-overwritten-when-expanding-vma.patch
+
+#CVE-2025-38502
+0001-bpf-Fix-oob-access-in-cgroup-local-storage.patch
+
