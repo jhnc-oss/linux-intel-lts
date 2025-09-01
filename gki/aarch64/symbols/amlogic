@@ -573,6 +573,7 @@
   down
   downgrade_write
   down_interruptible
+  down_killable
   down_read
   down_read_trylock
   down_timeout
@@ -786,6 +787,7 @@
   drop_reasons_register_subsys
   drop_reasons_unregister_subsys
   d_splice_alias
+  dump_backtrace
   dump_stack
   dw_pcie_find_capability
   dw_pcie_host_deinit
@@ -1005,6 +1007,7 @@
   handle_fasteoi_irq
   handle_simple_irq
   handle_sysrq
+  hci_cmd_sync
   hdmi_audio_infoframe_init
   hdmi_audio_infoframe_pack
   hdmi_avi_infoframe_init
@@ -1317,8 +1320,10 @@
   log_write_mmio
   lookup_bdev
   loops_per_jiffy
+  LZ4_compress_default
   LZ4_compress_fast
   LZ4_compress_fast_continue
+  LZ4_compress_HC
   LZ4_decompress_safe
   LZ4_decompress_safe_continue
   LZ4_decompress_safe_partial
@@ -2118,6 +2123,7 @@
   skb_queue_tail
   skb_realloc_headroom
   skb_scrub_packet
+  skb_split
   skb_trim
   skb_tstamp_tx
   skb_unlink
@@ -2372,10 +2378,12 @@
   __traceiter_android_rvh_enqueue_task
   __traceiter_android_rvh_replace_next_task_fair
   __traceiter_android_rvh_schedule
+  __traceiter_android_rvh_select_task_rq_dl
   __traceiter_android_rvh_select_task_rq_fair
   __traceiter_android_rvh_select_task_rq_rt
   __traceiter_android_rvh_tick_entry
   __traceiter_android_vh_alloc_pages_entry
+  __traceiter_android_vh_check_heap_object_bypass
   __traceiter_android_vh_cma_alloc_bypass
   __traceiter_android_vh_cpu_idle_enter
   __traceiter_android_vh_cpu_idle_exit
@@ -2383,7 +2391,11 @@
   __traceiter_android_vh_ftrace_format_check
   __traceiter_android_vh_ipi_stop
   __traceiter_android_vh_isolate_freepages
+  __traceiter_android_vh_kfree_bypass
+  __traceiter_android_vh_kmalloc_large_node_bypass
+  __traceiter_android_vh_ksize
   __traceiter_android_vh_look_around_migrate_folio
+  __traceiter_android_vh_poison_kmalloc_large_redzone
   __traceiter_android_vh_printk_caller
   __traceiter_android_vh_printk_caller_id
   __traceiter_android_vh_sched_show_task
@@ -2408,10 +2420,12 @@
   __tracepoint_android_rvh_enqueue_task
   __tracepoint_android_rvh_replace_next_task_fair
   __tracepoint_android_rvh_schedule
+  __tracepoint_android_rvh_select_task_rq_dl
   __tracepoint_android_rvh_select_task_rq_fair
   __tracepoint_android_rvh_select_task_rq_rt
   __tracepoint_android_rvh_tick_entry
   __tracepoint_android_vh_alloc_pages_entry
+  __tracepoint_android_vh_check_heap_object_bypass
   __tracepoint_android_vh_cma_alloc_bypass
   __tracepoint_android_vh_cpu_idle_enter
   __tracepoint_android_vh_cpu_idle_exit
@@ -2419,7 +2433,11 @@
   __tracepoint_android_vh_ftrace_format_check
   __tracepoint_android_vh_ipi_stop
   __tracepoint_android_vh_isolate_freepages
+  __tracepoint_android_vh_kfree_bypass
+  __tracepoint_android_vh_kmalloc_large_node_bypass
+  __tracepoint_android_vh_ksize
   __tracepoint_android_vh_look_around_migrate_folio
+  __tracepoint_android_vh_poison_kmalloc_large_redzone
   __tracepoint_android_vh_printk_caller
   __tracepoint_android_vh_printk_caller_id
   __tracepoint_android_vh_sched_show_task
@@ -2822,4 +2840,6 @@
   zs_malloc
   zs_map_object
   zs_pool_stats
+  zstd_max_clevel
+  zstd_min_clevel
   zs_unmap_object

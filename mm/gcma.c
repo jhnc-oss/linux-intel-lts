@@ -15,6 +15,7 @@
 #include <linux/xarray.h>
 #include <trace/hooks/mm.h>
 #include "gcma_sysfs.h"
+#include "internal.h"
 
 /*
  * page->page_type : area id
@@ -604,6 +605,7 @@ again:
 void gcma_alloc_range(unsigned long start_pfn, unsigned long end_pfn)
 {
 	int i;
+	unsigned long pfn;
 	struct gcma_area *area;
 	int nr_area = atomic_read(&nr_gcma_area);
 
@@ -623,6 +625,13 @@ void gcma_alloc_range(unsigned long start_pfn, unsigned long end_pfn)
 		__gcma_discard_range(area, s_pfn, e_pfn);
 	}
 	gcma_stat_add(ALLOCATED_PAGE, end_pfn - start_pfn + 1);
+
+	/*
+	 * GCMA returns pages with refcount 1 and expects them to have
+	 * the same refcount 1 whet they are freed.
+	 */
+	for (pfn = start_pfn; pfn <= end_pfn; pfn++)
+		set_page_count(pfn_to_page(pfn), 1);
 }
 EXPORT_SYMBOL_GPL(gcma_alloc_range);
 
@@ -634,6 +643,10 @@ void gcma_free_range(unsigned long start_pfn, unsigned long end_pfn)
 	int area_id, start_id = 0;
 
 	VM_BUG_ON(irqs_disabled());
+
+	/* The caller should ensure no other users when freeing */
+	for (pfn = start_pfn; pfn <= end_pfn; pfn++)
+		WARN_ON(!page_ref_dec_and_test(pfn_to_page(pfn)));
 
 	local_irq_disable();
 
@@ -752,6 +765,7 @@ static void gcma_cc_store_page(int hash_id, struct cleancache_filekey key,
 	bool is_new = false;
 	bool workingset = PageWorkingset(page);
 	bool bypass = false;
+	bool allow_nonworkingset = false;
 
 	trace_android_vh_gcma_cc_store_page_bypass(&bypass);
 	if (bypass)
@@ -767,10 +781,11 @@ static void gcma_cc_store_page(int hash_id, struct cleancache_filekey key,
 	if (!gcma_fs)
 		return;
 
+	trace_android_vh_gcma_cc_allow_nonworkingset(&allow_nonworkingset);
 find_inode:
 	inode = find_and_get_gcma_inode(gcma_fs, &key);
 	if (!inode) {
-		if (!workingset)
+		if (!workingset && !allow_nonworkingset)
 			return;
 		inode = add_gcma_inode(gcma_fs, &key);
 		if (!IS_ERR(inode))
@@ -789,14 +804,14 @@ load_page:
 	xa_lock(&inode->pages);
 	g_page = xa_load(&inode->pages, offset);
 	if (g_page) {
-		if (!workingset) {
+		if (!workingset && !allow_nonworkingset) {
 			gcma_erase_page(inode, offset, g_page, true);
 			goto out_unlock;
 		}
 		goto copy;
 	}
 
-	if (!workingset)
+	if (!workingset && !allow_nonworkingset)
 		goto out_unlock;
 
 	g_page = gcma_alloc_page();
