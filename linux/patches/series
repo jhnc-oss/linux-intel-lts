@@ -179,3 +179,12 @@
 #CVE-2025-38502
 0001-bpf-Fix-oob-access-in-cgroup-local-storage.patch
 
+#CVE-2025-38627
+0001-f2fs-compress-fix-UAF-of-f2fs_inode_info-in-f2fs_fre.patch
+
+#CVE-2025-38643 
+0002-wifi-cfg80211-Add-missing-lock-in-cfg80211_check_and.patch
+
+#CVE-2025-38621
+0003-md-make-rdev_addable-usable-for-rcu-mode.patch
+
