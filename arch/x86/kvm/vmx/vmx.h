@@ -16,7 +16,6 @@
 #include "../cpuid.h"
 #include "run_flags.h"
 #include "../mmu.h"
-#include "pmu_intel.h"
 
 #define X2APIC_MSR(r) (APIC_BASE_MSR + ((r) >> 4))
 
@@ -89,6 +88,22 @@ union vmx_exit_reason {
 		u32	failed_vmentry		: 1;
 	};
 	u32 full;
+};
+
+struct lbr_desc {
+	/* Basic info about guest LBR records. */
+	struct x86_pmu_lbr records;
+
+	/*
+	 * Emulate LBR feature via passthrough LBR registers when the
+	 * per-vcpu guest LBR event is scheduled on the current pcpu.
+	 *
+	 * The records may be inaccurate if the host reclaims the LBR.
+	 */
+	struct perf_event *event;
+
+	/* True if LBRs are marked as not intercepted in the MSR bitmap */
+	bool msr_passthrough;
 };
 
 extern struct x86_pmu_lbr vmx_lbr_caps;
@@ -235,14 +250,6 @@ struct nested_vmx {
 
 struct vcpu_vmx {
 	struct kvm_vcpu       vcpu;
-
-	/* Posted interrupt descriptor */
-	struct pi_desc pi_desc;
-
-	/* Used if this vCPU is waiting for PI notification wakeup. */
-	struct list_head pi_wakeup_list;
-	/* Until here same layout to struct vcpu_pi. */
-
 	u8                    fail;
 	u8		      x2apic_msr_bitmap_mode;
 
@@ -311,6 +318,12 @@ struct vcpu_vmx {
 	bool emulation_required;
 
 	union vmx_exit_reason exit_reason;
+
+	/* Posted interrupt descriptor */
+	struct pi_desc pi_desc;
+
+	/* Used if this vCPU is waiting for PI notification wakeup. */
+	struct list_head pi_wakeup_list;
 
 	/* Support for a guest hypervisor (nested VMX) */
 	struct nested_vmx nested;
@@ -421,6 +434,32 @@ static inline void vmx_set_intercept_for_msr(struct kvm_vcpu *vcpu, u32 msr,
 }
 
 void vmx_update_cpu_dirty_logging(struct kvm_vcpu *vcpu);
+
+u64 vmx_get_supported_debugctl(struct kvm_vcpu *vcpu, bool host_initiated);
+bool vmx_is_valid_debugctl(struct kvm_vcpu *vcpu, u64 data, bool host_initiated);
+
+static inline void vmx_guest_debugctl_write(struct kvm_vcpu *vcpu, u64 val)
+{
+	WARN_ON_ONCE(val & DEBUGCTLMSR_FREEZE_IN_SMM);
+
+	val |= vcpu->arch.host_debugctl & DEBUGCTLMSR_FREEZE_IN_SMM;
+	vmcs_write64(GUEST_IA32_DEBUGCTL, val);
+}
+
+static inline u64 vmx_guest_debugctl_read(void)
+{
+	return vmcs_read64(GUEST_IA32_DEBUGCTL) & ~DEBUGCTLMSR_FREEZE_IN_SMM;
+}
+
+static inline void vmx_reload_guest_debugctl(struct kvm_vcpu *vcpu)
+{
+	u64 val = vmcs_read64(GUEST_IA32_DEBUGCTL);
+
+	if (!((val ^ vcpu->arch.host_debugctl) & DEBUGCTLMSR_FREEZE_IN_SMM))
+		return;
+
+	vmx_guest_debugctl_write(vcpu, val & ~DEBUGCTLMSR_FREEZE_IN_SMM);
+}
 
 /*
  * Note, early Intel manuals have the write-low and read-high bitmap offsets
@@ -645,6 +684,21 @@ static __always_inline struct kvm_vmx *to_kvm_vmx(struct kvm *kvm)
 static __always_inline struct vcpu_vmx *to_vmx(struct kvm_vcpu *vcpu)
 {
 	return container_of(vcpu, struct vcpu_vmx, vcpu);
+}
+
+static inline struct lbr_desc *vcpu_to_lbr_desc(struct kvm_vcpu *vcpu)
+{
+	return &to_vmx(vcpu)->lbr_desc;
+}
+
+static inline struct x86_pmu_lbr *vcpu_to_lbr_records(struct kvm_vcpu *vcpu)
+{
+	return &vcpu_to_lbr_desc(vcpu)->records;
+}
+
+static inline bool intel_pmu_lbr_is_enabled(struct kvm_vcpu *vcpu)
+{
+	return !!vcpu_to_lbr_records(vcpu)->nr;
 }
 
 void intel_pmu_cross_mapped_check(struct kvm_pmu *pmu);
