@@ -32,10 +32,6 @@
 #CVE-2025-21807
 0018-block-fix-queue-freeze-vs-limits-lock-order-in-sysfs.patch
 
-#CVE-2025-21884
-0001-net-Add-net_passive_inc-and-net_passive_dec.patch
-0002-net-better-track-kernel-sockets-lifetime.patch
-
 #CVE-2025-40325
 0001-md-raid10-wait-barrier-before-returning-discard-requ.patch
 
@@ -128,10 +124,6 @@
 #CVE-2025-37906
 0001-ublk-fix-race-between-io_uring_cmd_complete_in_task-.patch
 
-#CVE-2025-38064
-0001-virtio-hookup-irq_get_affinity-callback.patch
-0002-virtio-break-and-reset-virtio-devices-on-device_shut.patch
-
 #CVE-2025-38041
 0001-clk-sunxi-ng-h616-Add-sigma-delta-modulation-setting.patch
 0002-clk-sunxi-ng-h616-Reparent-CPU-clock-during-frequenc.patch
@@ -186,4 +178,13 @@
 
 #CVE-2025-38502
 0001-bpf-Fix-oob-access-in-cgroup-local-storage.patch
+
+#CVE-2025-38627
+0001-f2fs-compress-fix-UAF-of-f2fs_inode_info-in-f2fs_fre.patch
+
+#CVE-2025-38643 
+0002-wifi-cfg80211-Add-missing-lock-in-cfg80211_check_and.patch
+
+#CVE-2025-38621
+0003-md-make-rdev_addable-usable-for-rcu-mode.patch
 
