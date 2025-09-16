@@ -547,10 +547,27 @@ out:
 #define GEM_OBJ_STAT_BUF_SIZE_MAX (1024*1024) /* 1MB */
 
 struct i915_gem_file_attr_priv {
+	struct bin_attribute *obj_attr;
+	struct kobject *kobj;
+	struct kref ref;
 	char tgid_str[16];
 	struct pid *tgid;
 	struct drm_i915_error_state_buf buf;
 };
+
+static void i915_gem_sysfs_file_release(struct kref *ref)
+{
+	struct i915_gem_file_attr_priv *attr_priv =
+			container_of(ref, struct i915_gem_file_attr_priv, ref);
+
+	if (attr_priv->kobj && attr_priv->obj_attr) {
+		sysfs_remove_bin_file(attr_priv->kobj, attr_priv->obj_attr);
+	}
+
+	i915_error_state_buf_release(&attr_priv->buf);
+	kfree(attr_priv->obj_attr);
+	kfree(attr_priv);
+}
 
 static ssize_t i915_gem_read_objects(struct file *filp,
 		struct kobject *memtrack_kobj,
@@ -670,18 +687,18 @@ int i915_gem_create_sysfs_file_entry(struct drm_device *dev,
 	struct drm_file *file_local;
 	int ret;
 
-	/*
-	 * Check for multiple drm files having same tgid. If found, copy the
-	 * bin attribute into the new file priv. Otherwise allocate a new
-	 * copy of bin attribute, and create its corresponding sysfs file.
-	 */
 	mutex_lock(&dev->filelist_mutex);
 	list_for_each_entry(file_local, &dev->filelist, lhead) {
 		struct drm_i915_file_private *file_priv_local =
 			file_local->driver_priv;
 
-		if (file_priv->tgid == file_priv_local->tgid) {
+		if (file_priv_local->obj_attr &&
+			file_priv->tgid == file_priv_local->tgid) {
+
 			file_priv->obj_attr = file_priv_local->obj_attr;
+			attr_priv = file_priv->obj_attr->private;
+			kref_get(&attr_priv->ref);
+
 			mutex_unlock(&dev->filelist_mutex);
 			return 0;
 		}
@@ -701,6 +718,10 @@ int i915_gem_create_sysfs_file_entry(struct drm_device *dev,
 		ret = -ENOMEM;
 		goto out_obj_attr;
 	}
+
+	kref_init(&attr_priv->ref);
+	attr_priv->obj_attr = obj_attr;
+	attr_priv->kobj = &i915->memtrack_kobj;
 
 	snprintf(attr_priv->tgid_str, 16, "%d", task_tgid_nr(current));
 	obj_attr->attr.name = attr_priv->tgid_str;
@@ -735,40 +756,15 @@ out:
 void i915_gem_remove_sysfs_file_entry(struct drm_device *dev,
 		struct drm_file *file)
 {
-	struct drm_i915_private *i915 = to_i915(dev);
 	struct drm_i915_file_private *file_priv = file->driver_priv;
-	struct drm_file *file_local;
-	int open_count = 1;
+	struct i915_gem_file_attr_priv *attr_priv;
 
-	/*
-	 * The current drm file instance is already removed from filelist at
-	 * this point.
-	 * Check if this particular drm file being removed is the last one for
-	 * that particular tgid, and no other instances for this tgid exist in
-	 * the filelist. If so, remove the corresponding sysfs file entry also.
-	 */
-	list_for_each_entry(file_local, &dev->filelist, lhead) {
-		struct drm_i915_file_private *file_priv_local =
-			file_local->driver_priv;
+	if (WARN_ON(!file_priv->obj_attr))
+		return;
 
-		if (pid_nr(file_priv->tgid) == pid_nr(file_priv_local->tgid))
-			open_count++;
-	}
-
-	if (open_count == 1) {
-		struct i915_gem_file_attr_priv *attr_priv;
-
-		if (WARN_ON(file_priv->obj_attr == NULL))
-			return;
-		attr_priv = file_priv->obj_attr->private;
-
-		sysfs_remove_bin_file(&i915->memtrack_kobj,
-				file_priv->obj_attr);
-
-		i915_error_state_buf_release(&attr_priv->buf);
-		kfree(file_priv->obj_attr->private);
-		kfree(file_priv->obj_attr);
-	}
+	attr_priv = file_priv->obj_attr->private;
+	if (attr_priv)
+		kref_put(&attr_priv->ref, i915_gem_sysfs_file_release);
 }
 
 static struct bin_attribute i915_gem_client_state_attr = {
