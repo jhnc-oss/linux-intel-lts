@@ -510,6 +510,9 @@ i915_drm_gem_obj_info(int id, void *ptr, void *data)
 {
 	struct drm_i915_gem_object *obj = ptr;
 	struct get_obj_stats_buf *obj_stat_buf = data;
+	int ret;
+
+	i915_gem_object_get(obj);
 
 	if (obj->pid_info.next == NULL) {
 		DRM_ERROR(
@@ -518,10 +521,13 @@ i915_drm_gem_obj_info(int id, void *ptr, void *data)
 				get_tiling_flag(obj),
 				obj->stolen ? "Y" : "N", obj->base.name,
 				obj->base.handle_count);
-		return 0;
+		ret = 0;
+	} else {
+		ret = i915_describe_obj(obj_stat_buf, obj);
 	}
 
-	return i915_describe_obj(obj_stat_buf, obj);
+	i915_gem_object_put(obj);
+	return ret;
 }
 
 bool i915_gem_obj_bound_any(struct drm_i915_gem_object *o)
@@ -543,6 +549,9 @@ i915_drm_gem_object_per_file_summary(int id, void *ptr, void *data)
 	struct per_file_obj_mem_info *stats = &pid_entry->stats;
 	int obj_shared_count = 0;
 	bool discard = false;
+	int ret = 0;
+
+	i915_gem_object_get(obj);
 
 	if (obj->pid_info.next == NULL) {
 		DRM_ERROR(
@@ -551,7 +560,7 @@ i915_drm_gem_object_per_file_summary(int id, void *ptr, void *data)
 				get_tiling_flag(obj),
 				obj->stolen ? "Y" : "N", obj->base.name,
 				obj->base.handle_count);
-		return 0;
+		goto out;
 	}
 
 	i915_obj_pidarray_validate(&obj->base);
@@ -559,11 +568,13 @@ i915_drm_gem_object_per_file_summary(int id, void *ptr, void *data)
 	stats->num_obj++;
 
 	obj_shared_count = i915_obj_shared_count(obj, pid_entry, &discard);
-	if (obj_shared_count < 0)
-		return obj_shared_count;
+	if (obj_shared_count < 0) {
+		ret = obj_shared_count;
+		goto out;
+	}
 
 	if (discard)
-		return 0;
+		goto out;
 
 	if (obj_shared_count > 1)
 		stats->num_obj_shared++;
@@ -608,7 +619,10 @@ i915_drm_gem_object_per_file_summary(int id, void *ptr, void *data)
 		} else
 			stats->phys_space_allocated_priv += obj->base.size;
 	}
-	return 0;
+
+out:
+	i915_gem_object_put(obj);
+	return ret;
 }
 
 static int
