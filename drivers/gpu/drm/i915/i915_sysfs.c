@@ -29,6 +29,7 @@
 #include <linux/module.h>
 #include <linux/stat.h>
 #include <linux/sysfs.h>
+#include <linux/string.h>
 
 #include "gt/intel_rc6.h"
 #include "gt/intel_rps.h"
@@ -521,26 +522,23 @@ static ssize_t i915_gem_clients_state_read(struct file *filp,
 	struct device *kdev = container_of(kobj, struct device, kobj);
 	struct drm_minor *minor = dev_to_drm_minor(kdev);
 	struct drm_device *dev = minor->dev;
-	struct drm_i915_private *i915 = to_i915(dev);
 	struct drm_i915_error_state_buf error_str;
-	ssize_t ret_count = 0;
 	int ret;
 
-	ret = i915_error_state_buf_init(&error_str, i915, count, off);
+	ret = i915_error_state_buf_init(&error_str, to_i915(dev), 4096, 0);
 	if (ret)
 		return ret;
 
 	ret = i915_get_drm_clients_info(&error_str, dev);
-	if (ret)
-		goto out;
+	if (ret) {
+		i915_error_state_buf_release(&error_str);
+		return ret;
+	}
 
-	ret_count = count < error_str.bytes ? count : error_str.bytes;
-
-	memcpy(buf, error_str.buf, ret_count);
-out:
+	ret = memory_read_from_buffer(buf, count, &off, error_str.buf, error_str.bytes);
 	i915_error_state_buf_release(&error_str);
 
-	return ret ?: ret_count;
+	return ret;
 }
 
 #define GEM_OBJ_STAT_BUF_SIZE (4*1024) /* 4KB */
@@ -552,7 +550,6 @@ struct i915_gem_file_attr_priv {
 	struct kref ref;
 	char tgid_str[16];
 	struct pid *tgid;
-	struct drm_i915_error_state_buf buf;
 };
 
 static void i915_gem_sysfs_file_release(struct kref *ref)
@@ -564,7 +561,6 @@ static void i915_gem_sysfs_file_release(struct kref *ref)
 		sysfs_remove_bin_file(attr_priv->kobj, attr_priv->obj_attr);
 	}
 
-	i915_error_state_buf_release(&attr_priv->buf);
 	kfree(attr_priv->obj_attr);
 	kfree(attr_priv);
 }
@@ -580,101 +576,56 @@ static ssize_t i915_gem_read_objects(struct file *filp,
 	struct drm_device *dev = minor->dev;
 	struct i915_gem_file_attr_priv *attr_priv;
 	struct pid *tgid;
+	struct drm_i915_error_state_buf local_buf;
 	ssize_t ret_count = 0;
 	long bytes_available;
 	int ret = 0, buf_size = GEM_OBJ_STAT_BUF_SIZE;
-	unsigned long timeout = msecs_to_jiffies(500) + 1;
-
-	/*
-	 * There may arise a scenario where sysfs file entry is being removed,
-	 * and may race against sysfs read. Sysfs file remove function would
-	 * have taken the drm_global_mutex and would wait for read to finish,
-	 * which is again waiting to acquire drm_global_mutex, leading to
-	 * deadlock. To avoid this, use mutex_trylock here with a timeout.
-	 */
-	while (!mutex_trylock(&drm_global_mutex) && --timeout)
-		schedule_timeout_killable(1);
-	if (timeout == 0) {
-		DRM_DEBUG_DRIVER("Unable to acquire drm global mutex.\n");
-		return -EBUSY;
-	}
 
 	if (!attr || !attr->private) {
-		ret = -EINVAL;
 		DRM_ERROR("attr | attr->private pointer is NULL\n");
-		goto out;
+		return -EINVAL;
 	}
 	attr_priv = attr->private;
 	tgid = attr_priv->tgid;
 
-	if (off && !attr_priv->buf.buf) {
-		ret = -EINVAL;
-		DRM_ERROR(
-			"Buf not allocated during read with non-zero offset\n");
-		goto out;
+retry:
+	ret = i915_obj_state_buf_init(&local_buf, buf_size);
+	if (ret) {
+		DRM_ERROR("obj state buf init failed. buf_size=%d\n", buf_size);
+		return ret;
 	}
 
-	if (off == 0) {
-retry:
-		if (!attr_priv->buf.buf) {
-			ret = i915_obj_state_buf_init(&attr_priv->buf,
-					buf_size);
-			if (ret) {
-				DRM_ERROR(
-					"obj state buf init failed. buf_size=%d\n",
-					buf_size);
-				goto out;
-			}
-		} else {
-			/* Reset the buf parameters before filling data */
-			// attr_priv->buf.pos = 0;
-			attr_priv->buf.bytes = 0;
-		}
+	ret = i915_gem_get_obj_info(&local_buf, dev, tgid);
+	if (ret) {
+		i915_error_state_buf_release(&local_buf);
+		return ret;
+	}
 
-		/* Read the gfx device stats */
-		ret = i915_gem_get_obj_info(&attr_priv->buf, dev, tgid);
-		if (ret)
-			goto out;
-
-		ret = i915_error_ok(&attr_priv->buf);
-		if (ret) {
-			ret = 0;
-			goto copy_data;
-		}
+	if (!i915_error_ok(&local_buf)) {
+		i915_error_state_buf_release(&local_buf);
 		if (buf_size >= GEM_OBJ_STAT_BUF_SIZE_MAX) {
 			DRM_DEBUG_DRIVER("obj stat buf size limit reached\n");
 			ret = -ENOMEM;
-			goto out;
 		} else {
-			/* Try to reallocate buf of larger size */
-			i915_error_state_buf_release(&attr_priv->buf);
 			buf_size *= 2;
-
-			ret = i915_obj_state_buf_init(&attr_priv->buf,
-					buf_size);
-			if (ret) {
-				DRM_ERROR(
-						"obj stat buf init failed. buf_size=%d\n",
-						buf_size);
-				goto out;
-			}
 			goto retry;
 		}
+
+		if (ret)
+			return ret;
 	}
-copy_data:
 
-	bytes_available = (long)attr_priv->buf.bytes - (long)off;
-
+	bytes_available = (long)local_buf.bytes - (long)off;
 	if (bytes_available > 0) {
-		ret_count = count < bytes_available ? count : bytes_available;
-		memcpy(buf, attr_priv->buf.buf + off, ret_count);
-	} else
+		ret_count = min_t(size_t, count, bytes_available);
+		memcpy(buf, local_buf.buf + off, ret_count);
+	} else {
 		ret_count = 0;
+	}
 
-out:
-	mutex_unlock(&drm_global_mutex);
+	i915_error_state_buf_release(&local_buf);
 
-	return ret ?: ret_count;
+	return ret_count;
 }
 
 int i915_gem_create_sysfs_file_entry(struct drm_device *dev,
