@@ -143,12 +143,12 @@ STORAGE_CLASS_INLINE int clip(int a, int b, int c)
 	return min(max(a, b), c);
 }
 
-STORAGE_CLASS_INLINE unsigned int umax(unsigned int a, unsigned int b)
+STORAGE_CLASS_INLINE unsigned int ipu4_umax(unsigned int a, unsigned int b)
 {
 	return MAX(a, b);
 }
 
-STORAGE_CLASS_INLINE unsigned int umin(unsigned int a, unsigned int b)
+STORAGE_CLASS_INLINE unsigned int ipu4_umin(unsigned int a, unsigned int b)
 {
 	return MIN(a, b);
 }
@@ -156,7 +156,7 @@ STORAGE_CLASS_INLINE unsigned int umin(unsigned int a, unsigned int b)
 STORAGE_CLASS_INLINE unsigned int uclip(unsigned int a, unsigned int b,
 					unsigned int c)
 {
-	return umin(umax(a, b), c);
+	return ipu4_umin(ipu4_umax(a, b), c);
 }
 
 STORAGE_CLASS_INLINE unsigned int ceil_div(unsigned int a, unsigned int b)
