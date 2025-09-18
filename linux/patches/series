@@ -29,18 +29,12 @@
 0016-drm-i915-vga-Convert-VGA-code-to-intel_display.patch
 0017-drm-i915-Grab-intel_display-from-the-encoder-to-avoi.patch
 
-#CVE-2025-21807
-0018-block-fix-queue-freeze-vs-limits-lock-order-in-sysfs.patch
-
 #CVE-2025-40325
 0001-md-raid10-wait-barrier-before-returning-discard-requ.patch
 
 #CVE-2025-37860
 0003-sfc-rip-out-MDIO-support.patch
 0004-sfc-fix-NULL-dereferences-in-ef100_process_design_pa.patch
-
-#CVE-2025-23133
-0006-wifi-ath11k-update-channel-list-in-reg-notifier-inst.patch
 
 #CVE-2025-23132
 0007-f2fs-quota-fix-to-avoid-warning-in-dquot_writeback_d.patch
@@ -54,21 +48,12 @@
 #CVE-2025-22127
 0012-f2fs-fix-potential-deadloop-in-prepare_compress_over.patch
 
-#CVE-2025-22125
-0014-md-raid1-raid10-don-t-ignore-IO-flags.patch
-
-#CVE-2025-22124
-0015-md-md-bitmap-fix-wrong-bitmap_limit-for-clustermd-wh.patch
-
 #CVE-2025-22121
 0018-ext4-introduce-ITAIL-helper.patch
 0019-ext4-fix-out-of-bound-read-in-ext4_xattr_inode_dec_r.patch
 
 #CVE-2025-22104
 0020-ibmvnic-Use-kernel-helpers-for-hex-dumps.patch
-
-#CVE-2025-22103
-0021-net-fix-NULL-pointer-dereference-in-l3mdev_l3_rcv.patch
 
 #CVE-2024-58097
 0024-wifi-ath11k-fix-RCU-stall-while-reaping-monitor-dest.patch
@@ -87,10 +72,6 @@
 
 #CVE-2025-22116
 0029-idpf-check-error-for-register_netdev-on-init.patch
-
-#CVE-2025-22113
-0031-ext4-define-ext4_journal_destroy-wrapper.patch
-0032-ext4-avoid-journaling-sb-update-on-error-if-journal-.patch
 
 #CVE-2025-22111
 0033-net-Remove-RTNL-dance-for-SIOCBRADDIF-and-SIOCBRDELI.patch
@@ -118,9 +99,6 @@
 0001-perf-dwc_pcie-Qualify-RAS-DES-VSEC-Capability-by-Ven.patch
 0002-perf-dwc_pcie-fix-duplicate-pci_dev-devices.patch
 
-#CVE-2025-37743
-0003-wifi-ath12k-Avoid-memory-leak-while-enabling-statist.patch
-
 #CVE-2025-37906
 0001-ublk-fix-race-between-io_uring_cmd_complete_in_task-.patch
 
@@ -131,11 +109,6 @@
 
 #CVE-2025-38029
 0001-kasan-avoid-sleepable-page-allocation-from-atomic-co.patch
-
-#CVE-2025-38272
-0001-net-dsa-add-hook-to-determine-whether-EEE-is-support.patch
-0002-net-dsa-b53-bcm_sf2-implement-.support_eee-method.patch
-0003-net-dsa-b53-do-not-enable-EEE-on-bcm63xx.patch
 
 #CVE-2025-38248
 0004-bridge-mcast-Fix-use-after-free-during-router-port-c.patch
@@ -156,9 +129,6 @@
 #CVE-2025-38140
 0011-dm-limit-swapping-tables-for-devices-with-zone-write.patch
 
-#CVE-2025-38306
-0012-fs-fhandle.c-fix-a-race-in-call-of-has_locked_childr.patch
-
 #CVE-2025-38284
 0013-wifi-rtw89-pci-consolidate-PCI-basic-configurations-.patch
 0014-wifi-rtw89-pci-disable-PCI-completion-timeout-contro.patch
@@ -176,9 +146,6 @@
 #CVE-2025-38207
 0022-mm-fix-uprobe-pte-be-overwritten-when-expanding-vma.patch
 
-#CVE-2025-38502
-0001-bpf-Fix-oob-access-in-cgroup-local-storage.patch
-
 #CVE-2025-38627
 0001-f2fs-compress-fix-UAF-of-f2fs_inode_info-in-f2fs_fre.patch
 
@@ -187,4 +154,16 @@
 
 #CVE-2025-38621
 0003-md-make-rdev_addable-usable-for-rcu-mode.patch
+
+#CVE-2025-39789 
+0001-crypto-x86-aegis-Add-missing-error-checks.patch
+
+#CVE-2025-39764
+0002-netfilter-ctnetlink-remove-refcounting-in-expectatio.patch
+
+#CVE-2025-39745
+0003-rcutorture-Fix-rcutorture_one_extend_check-splat-in-.patch
+
+#CVE-2025-39677 
+0004-net-sched-Fix-backlog-accounting-in-qdisc_dequeue_in.patch
 
