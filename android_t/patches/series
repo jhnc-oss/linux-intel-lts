@@ -467,9 +467,6 @@
 #CVE-2023-52939
 0001-mm-memcg-fix-NULL-pointer-in-mem_cgroup_track_foreig.patch
 
-#CVE-2023-52935
-0001-mm-khugepaged-fix-anon_vma-race.patch
-
 #CVE-2022-49742
 0001-f2fs-add-f2fs_init_write_merge_io-function.patch
 0002-f2fs-initialize-locks-earlier-in-f2fs_fill_super.patch
@@ -590,9 +587,6 @@
 
 #CVE-2022-50015
 0015-BACKPORT-ASoC-SOF-Intel-cnl-Do-not-process-IPC-reply.patch
-
-#CVE-2022-50070
-0016-BACKPORT-mptcp-do-not-queue-data-on-closed-subflows.patch
 
 #CVE-2022-50071
 0017-BACKPORT-mptcp-move-subflow-cleanup-in-mptcp_destroy.patch
