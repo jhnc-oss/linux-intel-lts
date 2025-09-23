@@ -1,0 +1,152 @@
+From d27cde3c3cda4786499f60e2570f7831aaac6958 Mon Sep 17 00:00:00 2001
+From: Jia He <justin.he@arm.com>
+Date: Mon, 10 Oct 2022 02:35:54 +0000
+Subject: [PATCH 20/23] EDAC/ghes: Add a notifier for reporting memory errors
+
+In order to make it a proper module and disentangle it from facilities,
+add a notifier for reporting memory errors. Use an atomic notifier
+because calls sites like ghes_proc_in_irq() run in interrupt context.
+
+  [ bp: Massage commit message. ]
+
+Suggested-by: Borislav Petkov <bp@alien8.de>
+Signed-off-by: Jia He <justin.he@arm.com>
+Signed-off-by: Borislav Petkov <bp@suse.de>
+Link: https://lore.kernel.org/r/20221010023559.69655-3-justin.he@arm.com
+---
+ drivers/acpi/apei/ghes.c |  4 +++-
+ drivers/edac/ghes_edac.c | 22 ++++++++++++++++++++--
+ include/acpi/ghes.h      | 10 +++-------
+ 3 files changed, 26 insertions(+), 10 deletions(-)
+
+diff --git a/drivers/acpi/apei/ghes.c b/drivers/acpi/apei/ghes.c
+index 07fb9620dde0..27d372f82a24 100644
+--- a/drivers/acpi/apei/ghes.c
++++ b/drivers/acpi/apei/ghes.c
+@@ -94,6 +94,8 @@
+ #define FIX_APEI_GHES_SDEI_CRITICAL	__end_of_fixed_addresses
+ #endif
+ 
++static ATOMIC_NOTIFIER_HEAD(ghes_report_chain);
++
+ static inline bool is_hest_type_generic_v2(struct ghes *ghes)
+ {
+ 	return ghes->generic->header.type == ACPI_HEST_TYPE_GENERIC_ERROR_V2;
+@@ -674,7 +676,7 @@ static bool ghes_do_proc(struct ghes *ghes,
+ 		if (guid_equal(sec_type, &CPER_SEC_PLATFORM_MEM)) {
+ 			struct cper_sec_mem_err *mem_err = acpi_hest_get_payload(gdata);
+ 
+-			ghes_edac_report_mem_error(sev, mem_err);
++			atomic_notifier_call_chain(&ghes_report_chain, sev, mem_err);
+ 
+ 			arch_apei_report_mem_error(sev, mem_err);
+ 			queued = ghes_handle_memory_failure(gdata, sev, sync);
+diff --git a/drivers/edac/ghes_edac.c b/drivers/edac/ghes_edac.c
+index d497b32f6f86..98d9a072ca79 100644
+--- a/drivers/edac/ghes_edac.c
++++ b/drivers/edac/ghes_edac.c
+@@ -14,6 +14,7 @@
+ #include <linux/dmi.h>
+ #include "edac_module.h"
+ #include <ras/ras_event.h>
++#include <linux/notifier.h>
+ 
+ struct ghes_pvt {
+ 	struct mem_ctl_info *mci;
+@@ -236,10 +237,13 @@ static void ghes_scan_system(void)
+ 	system_scanned = true;
+ }
+ 
+-void ghes_edac_report_mem_error(int sev, struct cper_sec_mem_err *mem_err)
++static int ghes_edac_report_mem_error(struct notifier_block *nb,
++				      unsigned long val, void *data)
+ {
++	struct cper_sec_mem_err *mem_err = (struct cper_sec_mem_err *)data;
+ 	struct edac_raw_error_desc *e;
+ 	struct mem_ctl_info *mci;
++	unsigned long sev = val;
+ 	struct ghes_pvt *pvt;
+ 	unsigned long flags;
+ 	char *p;
+@@ -250,7 +254,7 @@ void ghes_edac_report_mem_error(int sev, struct cper_sec_mem_err *mem_err)
+ 	 * know.
+ 	 */
+ 	if (WARN_ON_ONCE(in_nmi()))
+-		return;
++		return NOTIFY_OK;
+ 
+ 	spin_lock_irqsave(&ghes_lock, flags);
+ 
+@@ -496,8 +500,18 @@ void ghes_edac_report_mem_error(int sev, struct cper_sec_mem_err *mem_err)
+ 
+ unlock:
+ 	spin_unlock_irqrestore(&ghes_lock, flags);
++
++	return NOTIFY_OK;
+ }
+ 
++/*
++ * Known systems that are safe to enable this module.
++ */
++/* static struct acpi_platform_list plat_list[] = { */
++/* 	{"HPE   ", "Server  ", 0, ACPI_SIG_FADT, all_versions}, */
++/* 	{ } End */
++/* }; */
++
+ static struct notifier_block ghes_edac_mem_err_nb = {
+ 	.notifier_call	= ghes_edac_report_mem_error,
+ 	.priority	= 0,
+@@ -606,6 +620,8 @@ int ghes_edac_register(struct ghes *ghes, struct device *dev)
+ 	ghes_pvt = pvt;
+ 	spin_unlock_irqrestore(&ghes_lock, flags);
+ 
++	ghes_register_report_chain(&ghes_edac_mem_err_nb);
++
+ 	/* only set on success */
+ 	refcount_set(&ghes_refcount, 1);
+ 
+@@ -648,6 +664,8 @@ void ghes_edac_unregister(struct ghes *ghes)
+ 	if (mci)
+ 		edac_mc_free(mci);
+ 
++	ghes_unregister_report_chain(&ghes_edac_mem_err_nb);
++
+ unlock:
+ 	mutex_unlock(&ghes_reg_mutex);
+ }
+diff --git a/include/acpi/ghes.h b/include/acpi/ghes.h
+index e2963a835f77..e66bbfb5dd8c 100644
+--- a/include/acpi/ghes.h
++++ b/include/acpi/ghes.h
+@@ -78,8 +78,6 @@ int ghes_estatus_pool_init(unsigned int num_ghes);
+ /* From drivers/edac/ghes_edac.c */
+ 
+ #ifdef CONFIG_EDAC_GHES
+-void ghes_edac_report_mem_error(int sev, struct cper_sec_mem_err *mem_err);
+-
+ int ghes_edac_register(struct ghes *ghes, struct device *dev);
+ 
+ void ghes_edac_unregister(struct ghes *ghes);
+@@ -87,11 +85,6 @@ void ghes_edac_unregister(struct ghes *ghes);
+ struct list_head *ghes_get_devices(void);
+ 
+ #else
+-static inline void ghes_edac_report_mem_error(int sev,
+-				       struct cper_sec_mem_err *mem_err)
+-{
+-}
+-
+ static inline int ghes_edac_register(struct ghes *ghes, struct device *dev)
+ {
+ 	return -ENODEV;
+@@ -151,4 +144,7 @@ int ghes_notify_sea(void);
+ static inline int ghes_notify_sea(void) { return -ENOENT; }
+ #endif
+ 
++struct notifier_block;
++extern void ghes_register_report_chain(struct notifier_block *nb);
++extern void ghes_unregister_report_chain(struct notifier_block *nb);
+ #endif /* GHES_H */
+-- 
+2.43.0
+

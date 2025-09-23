@@ -1,0 +1,78 @@
+From 84eb5294a7373b2e62aba70547e3deeca698c59c Mon Sep 17 00:00:00 2001
+From: Shuai Xue <xueshuai@linux.alibaba.com>
+Date: Mon, 14 Jul 2025 19:42:11 +0800
+Subject: [PATCH 21/23] ACPI: APEI: send SIGBUS to current task if synchronous
+ memory error not recovered
+
+If a synchronous error is detected as a result of user-space process
+triggering a 2-bit uncorrected error, the CPU will take a synchronous
+error exception such as Synchronous External Abort (SEA) on Arm64. The
+kernel will queue a memory_failure() work which poisons the related
+page, unmaps the page, and then sends a SIGBUS to the process, so that
+a system wide panic can be avoided.
+
+However, no memory_failure() work will be queued when abnormal
+synchronous errors occur. These errors can include situations like
+invalid PA, unexpected severity, no memory failure config support,
+invalid GUID section, etc. In such a case, the user-space process will
+trigger SEA again.  This loop can potentially exceed the platform
+firmware threshold or even trigger a kernel hard lockup, leading to a
+system reboot.
+
+Fix it by performing a force kill if no memory_failure() work is queued
+for synchronous errors.
+
+Signed-off-by: Shuai Xue <xueshuai@linux.alibaba.com>
+Reviewed-by: Jarkko Sakkinen <jarkko@kernel.org>
+Reviewed-by: Jonathan Cameron <Jonathan.Cameron@huawei.com>
+Reviewed-by: Yazen Ghannam <yazen.ghannam@amd.com>
+Reviewed-by: Jane Chu <jane.chu@oracle.com>
+Reviewed-by: Hanjun Guo <guohanjun@huawei.com>
+Link: https://patch.msgid.link/20250714114212.31660-2-xueshuai@linux.alibaba.com
+[ rjw: Changelog edits ]
+Signed-off-by: Rafael J. Wysocki <rafael.j.wysocki@intel.com>
+---
+ drivers/acpi/apei/ghes.c | 13 +++++++++++++
+ 1 file changed, 13 insertions(+)
+
+diff --git a/drivers/acpi/apei/ghes.c b/drivers/acpi/apei/ghes.c
+index 27d372f82a24..3319a25e252b 100644
+--- a/drivers/acpi/apei/ghes.c
++++ b/drivers/acpi/apei/ghes.c
+@@ -696,6 +696,17 @@ static bool ghes_do_proc(struct ghes *ghes,
+ 		}
+ 	}
+ 
++	/*
++	 * If no memory failure work is queued for abnormal synchronous
++	 * errors, do a force kill.
++	 */
++	if (sync && !queued) {
++		dev_err(ghes->dev,
++			HW_ERR GHES_PFX "%s:%d: synchronous unrecoverable error (SIGBUS)\n",
++			current->comm, task_pid_nr(current));
++		force_sig(SIGBUS);
++	}
++
+ 	return queued;
+ }
+ 
+@@ -1543,6 +1554,7 @@ void __init ghes_init(void)
+ 		pr_info(GHES_PFX "Failed to enable APEI firmware first mode.\n");
+ }
+ 
++#ifdef CONFIG_EDAC_GHES
+ /*
+  * Known x86 systems that prefer GHES error reporting:
+  */
+@@ -1568,6 +1580,7 @@ struct list_head *ghes_get_devices(void)
+ 	return &ghes_devs;
+ }
+ EXPORT_SYMBOL_GPL(ghes_get_devices);
++#endif
+ 
+ void ghes_register_report_chain(struct notifier_block *nb)
+ {
+-- 
+2.43.0
+
