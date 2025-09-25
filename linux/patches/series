@@ -12,9 +12,6 @@
 0007-btrfs-implement-partial-deletion-of-RAID-stripe-exte.patch
 0008-btrfs-don-t-use-btrfs_set_item_key_safe-on-RAID-stri.patch
 
-#CVE-2025-21751
-0009-net-mlx5-HWS-change-error-flow-on-matcher-disconnect.patch
-
 #CVE-2025-21709
 0010-kernel-be-more-careful-about-dup_mmap-failures-and-u.patch
 
