@@ -164,3 +164,8 @@
 #CVE-2025-39677 
 0004-net-sched-Fix-backlog-accounting-in-qdisc_dequeue_in.patch
 
+#CVE-2025-39859
+0001-ptp-ocp-fix-use-after-free-bugs-causing-by-ptp_ocp_w.patch
+
+#CVE-2025-39816
+0002-io_uring-kbuf-always-use-READ_ONCE-to-read-ring-prov.patch
