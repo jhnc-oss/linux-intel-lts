@@ -32,6 +32,7 @@
 #include <linux/if_packet.h>
 #include <linux/llist.h>
 #include <net/flow.h>
+#include <dovetail/skbuff.h>
 #if IS_ENABLED(CONFIG_NF_CONNTRACK)
 #include <linux/netfilter/nf_conntrack_common.h>
 #endif
@@ -520,8 +521,12 @@ enum {
 	 */
 	SKBFL_MANAGED_FRAG_REFS = BIT(4),
 
-	/* data lives into an oob-enabled storage. */
-	SKBFL_OOB_STORAGE = BIT(5),
+	/* data storage is managed by a companion core operating from
+	 * the oob stage. */
+	SKBFL_OOB_MANAGED = BIT(5),
+
+	/* a companion core is timestamping this buffer. */
+	SKBFL_OOB_TIMESTAMPED = BIT(6),
 };
 
 #define SKBFL_ZEROCOPY_FRAG	(SKBFL_ZEROCOPY_ENABLE | SKBFL_SHARED_FRAG)
@@ -603,6 +608,7 @@ struct skb_shared_info {
 		struct skb_shared_hwtstamps hwtstamps;
 		struct xsk_tx_metadata_compl xsk_meta;
 	};
+	struct		skb_shared_oob oob_shinfo;
 	unsigned int	gso_type;
 	u32		tskey;
 
@@ -944,7 +950,8 @@ struct sk_buff {
 				pfmemalloc:1,
 				pp_recycle:1; /* page_pool recycle indicator */
 #ifdef CONFIG_NET_OOB
-	__u8			oob_head:1;
+	__u8			oob:1,
+				oob_released:1;
 #endif
 #ifdef CONFIG_SKB_EXTENSIONS
 	__u8			active_extensions;
@@ -5229,65 +5236,96 @@ struct sk_buff *get_oob_skb(void);
 void put_oob_skb(struct sk_buff *skb);
 
 /**
- * skb_is_oob - Whether the buffer was allocated from the oob
- * pool. Caution: this is distinct from the skb conveying oob storage,
- * see skb_has_oob_storage().
+ * skb_init_inband - Set up the oob markers appropriately for an
+ * in-band skb.
+ */
+static inline void skb_init_inband(struct sk_buff *skb)
+{
+	skb->oob = 0;
+	skb->oob_released = 0;
+}
+
+/**
+ * skb_is_oob - Whether the buffer shell was allocated from the oob
+ * pool. Caution: this is distinct from a skb which storage is managed
+ * by a companion core, see skb_is_oob_managed().
  */
 static inline bool skb_is_oob(const struct sk_buff *skb)
 {
-	return skb->oob_head;
+	return skb->oob;
 }
 
 static inline void skb_mark_oob(struct sk_buff *skb)
 {
-	skb->oob_head = 1;
+	skb->oob = 1;
+}
+
+static inline bool skb_is_oob_released(const struct sk_buff *skb)
+{
+	return skb->oob_released;
+}
+
+static inline void skb_mark_oob_released(struct sk_buff *skb)
+{
+	skb->oob_released = 1;
+}
+
+static inline void skb_clear_oob_released(struct sk_buff *skb)
+{
+	skb->oob_released = 0;
 }
 
 /**
- * skb_has_oob_storage - Whether the skb data lives in an oob-enabled
- * page pool.
+ * skb_is_oob_timestamped - Whether the buffer is timestamped by a
+ * companion core, in which case the timestamps should be stored in
+ * skb_shinfo(skb)->oob_shinfo by a companion core.
  */
-static inline bool skb_has_oob_storage(const struct sk_buff *skb)
+static inline bool skb_is_oob_timestamped(const struct sk_buff *skb)
 {
-	return skb_shinfo(skb)->flags & SKBFL_OOB_STORAGE;
+	return skb_shinfo(skb)->flags & SKBFL_OOB_TIMESTAMPED;
 }
 
-static inline void skb_mark_oob_storage(struct sk_buff *skb)
+static inline void skb_mark_oob_timestamped(struct sk_buff *skb)
 {
-	skb_shinfo(skb)->flags |= SKBFL_OOB_STORAGE;
+	skb_shinfo(skb)->flags |= SKBFL_OOB_TIMESTAMPED;
 }
 
-static inline dma_addr_t skb_oob_storage_addr(const struct sk_buff *skb)
+/**
+ * skb_is_oob_managed - Whether the skb data is managed by a companion
+ * core.
+ */
+static inline bool skb_is_oob_managed(const struct sk_buff *skb)
 {
-	if (!skb->head || !skb_has_oob_storage(skb) || !skb->pp_recycle)
-		return DMA_MAPPING_ERROR;
-
-	return page_pool_get_dma_addr(virt_to_page(skb->head));
+	return skb_shinfo(skb)->flags & SKBFL_OOB_MANAGED;
 }
 
-bool recycle_skb_oob(struct sk_buff *skb);
+static inline void skb_mark_oob_managed(struct sk_buff *skb)
+{
+	skb_shinfo(skb)->flags |= SKBFL_OOB_MANAGED;
+}
+
+static inline struct skb_shared_oob *skb_shinfo_oob(struct sk_buff *skb)
+{
+	return &skb_shinfo(skb)->oob_shinfo;
+}
+
+dma_addr_t skb_oob_dma_addr(const struct sk_buff *skb);
+
+bool skb_release_oob(struct sk_buff *skb);
 void free_skb_oob(struct sk_buff *skb);
-void finalize_skb_inband(struct sk_buff *skb);
 
-/**
- *	__skb_inband_clone - In-band specific setup for skbs for a
- *	newly allocated clone head. Other allocation places don't need
- *	that because they are memset-zeroed from skb to &skb->end
- *	before building the buffer around a data storage area.
- */
-static inline void __skb_inband_clone(struct sk_buff *skb)
+static inline void finalize_skb_inband(struct sk_buff *skb)
 {
-	skb->oob_head = 0;
+	__kfree_skb(skb);
 }
 
 /**
  *	__skb_oob_free_head - Called from the in-band net core after
  *      the last reference to the buffer (->users) was dropped, and
- *      any (shared) data was unref'ed (and possibly freed). By
- *      construction, this is only called for buffers which refer(red)
- *      to non-oob storage. Out-of-band allocated buffers which also
- *      convey out-of-band acessible storage must flow through
- *      free_skb_oob() instead.
+ *      any (shared) data was unref'ed (and possibly freed).By
+ *      construction, this is only called for skbs which refer to
+ *      non-oob storage. Skbs coming from the oob pool _and_ conveying
+ *      oob storage must flow through free_skb_oob() instead.
  */
 static inline bool __skb_oob_free_head(struct sk_buff *skb)
 {
@@ -5301,13 +5339,18 @@ static inline bool __skb_oob_free_head(struct sk_buff *skb)
 
 #else  /* !CONFIG_NET_OOB */
 
+static inline void skb_init_inband(struct sk_buff *skb)
+{
+}
+
 static inline bool skb_is_oob(const struct sk_buff *skb)
 {
 	return false;
 }
 
-static inline void __skb_inband_clone(struct sk_buff *skb)
+static inline bool skb_is_oob_released(const struct sk_buff *skb)
 {
+	return false;
 }
 
 static inline bool __skb_oob_free_head(struct sk_buff *skb)
@@ -5315,17 +5358,27 @@ static inline bool __skb_oob_free_head(struct sk_buff *skb)
 	return false;
 }
 
-static inline bool skb_has_oob_storage(const struct sk_buff *skb)
+static inline bool skb_is_oob_timestamped(const struct sk_buff *skb)
 {
 	return false;
 }
 
-static inline dma_addr_t skb_oob_storage_addr(const struct sk_buff *skb)
+static inline bool skb_is_oob_managed(const struct sk_buff *skb)
+{
+	return false;
+}
+
+static inline struct skb_shared_oob *skb_shinfo_oob(struct sk_buff *skb)
+{
+	return NULL;
+}
+
+static inline dma_addr_t skb_oob_dma_addr(const struct sk_buff *skb)
 {
 	return DMA_MAPPING_ERROR;
 }
 
-static inline bool recycle_skb_oob(struct sk_buff *skb)
+static inline bool skb_release_oob(struct sk_buff *skb)
 {
 	return false;
 }

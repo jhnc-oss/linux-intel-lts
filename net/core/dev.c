@@ -3206,13 +3206,26 @@ static void __netif_reschedule(struct Qdisc *q)
 	struct softnet_data *sd;
 	unsigned long flags;
 
-	local_irq_save(flags);
-	sd = this_cpu_ptr(&softnet_data);
-	q->next_sched = NULL;
-	*sd->output_queue_tailp = q;
-	sd->output_queue_tailp = &q->next_sched;
-	raise_softirq_irqoff(NET_TX_SOFTIRQ);
-	local_irq_restore(flags);
+	if (net_running_oob()) {
+		/* We can't migrate CPU from the oob stage. */
+		sd = this_cpu_ptr(&softnet_data);
+		q->next_sched = NULL;
+		flags = hard_local_irq_save();
+		*sd->output_queue_tailp = q;
+		sd->output_queue_tailp = &q->next_sched;
+		raise_softirq_irqoff(NET_TX_SOFTIRQ);
+		hard_local_irq_restore(flags);
+	} else {
+		local_irq_save(flags);
+		sd = this_cpu_ptr(&softnet_data);
+		q->next_sched = NULL;
+		hard_net_local_irq_disable();
+		*sd->output_queue_tailp = q;
+		sd->output_queue_tailp = &q->next_sched;
+		hard_net_local_irq_enable();
+		raise_softirq_irqoff(NET_TX_SOFTIRQ);
+		local_irq_restore(flags);
+	}
 }
 
 void __netif_schedule(struct Qdisc *q)
@@ -3249,6 +3262,7 @@ void netif_tx_wake_queue(struct netdev_queue *dev_queue)
 		struct Qdisc *q;
 
 		rcu_read_lock();
+		netif_tx_wake_oob(dev_queue);
 		q = rcu_dereference(dev_queue->qdisc);
 		__netif_schedule(q);
 		rcu_read_unlock();
@@ -3271,7 +3285,7 @@ void dev_kfree_skb_irq_reason(struct sk_buff *skb, enum skb_drop_reason reason)
 	}
 	get_kfree_skb_cb(skb)->reason = reason;
 
-	if (recycle_skb_oob(skb))
+	if (skb_release_oob(skb))
 		return;
 
 	local_irq_save(flags);
@@ -5286,15 +5300,21 @@ bool netif_receive_oob(struct sk_buff *skb)
 	 * packet is not picked, then decide whether we should leave
 	 * it to the in-band caller, or defer it to the RX softirq if
 	 * currently running oob.
+	 *
+	 * CAUTION: we _need_ the sirq indirection via inband_rx_work,
+	 * to make sure softirqs are going to be checked on return
+	 * from it. i.e. we could not simply set the RX softirq as
+	 * pending and be done with it, because we could not tell
+	 * whether it is going to be handled asap.
 	 */
 	if (dev && netif_oob_diversion(dev)) {
 		if (netif_deliver_oob(skb))
 			return true;
 		if (net_running_oob()) {
-			raw_spin_lock_irqsave(&sd->inband_rx_lock, flags);
+			flags = hard_local_irq_save();
 			kick_softirq = list_empty(&sd->inband_rx_list);
-			list_add(&skb->list, &sd->inband_rx_list);
-			raw_spin_unlock_irqrestore(&sd->inband_rx_lock, flags);
+			list_add_tail(&skb->list, &sd->inband_rx_list);
+			hard_local_irq_restore(flags);
 			if (kick_softirq)
 				irq_work_queue(&sd->inband_rx_work);
 			return true;
@@ -5302,6 +5322,31 @@ bool netif_receive_oob(struct sk_buff *skb)
 	}
 
 	return false;	     /* Not handled, caller should pick it. */
+}
+
+/* RX counterpart to dev_queue_xmit_nit() for use by the oob netstack. */
+int dev_queue_recv_nit(struct sk_buff *skb, struct net_device *dev)
+{
+	struct packet_type *ptype;
+	int _ret, ret = 0;
+
+	rcu_read_lock();
+
+	list_for_each_entry_rcu(ptype, &net_hotdata.ptype_all, list) {
+		_ret = deliver_skb(skb, ptype, dev);
+		if (unlikely(_ret && !ret))
+			ret = _ret;
+	}
+
+	list_for_each_entry_rcu(ptype, &skb->dev->ptype_all, list) {
+		_ret = deliver_skb(skb, ptype, dev);
+		if (unlikely(_ret && !ret))
+			ret = _ret;
+	}
+
+	rcu_read_unlock();
+
+	return ret;
 }
 
 static bool netif_receive_oob_list(struct list_head *head)
@@ -5319,17 +5364,21 @@ static void process_inband_rx_backlog(struct softnet_data *sd)
 	unsigned long flags;
 	LIST_HEAD(list);
 
-	raw_spin_lock_irqsave(&sd->inband_rx_lock, flags);
+	flags = hard_local_irq_save();
 	list_splice_init(&sd->inband_rx_list, &list);
-	raw_spin_unlock_irqrestore(&sd->inband_rx_lock, flags);
+	hard_local_irq_restore(flags);
 	if (!list_empty(&list))
 		_netif_receive_skb_list(&list);
 }
 
-__weak void napi_schedule_oob(struct napi_struct *n)
-{ }
+static int napi_poll(struct napi_struct *n, struct list_head *repoll);
 
-__weak void napi_complete_oob(struct napi_struct *n)
+int napi_poll_oob(struct napi_struct *n, struct list_head *repoll)
+{
+	return napi_poll(n, repoll);
+}
+
+__weak void napi_schedule_oob(struct napi_struct *n)
 { }
 
 __weak void process_inband_tx_backlog(struct softnet_data *sd)
@@ -5340,7 +5389,10 @@ static void kick_rx_inband(struct irq_work *irq_work)
 	__raise_softirq_irqoff(NET_RX_SOFTIRQ);
 }
 
-#else
+__weak void netif_tx_wake_oob(struct netdev_queue *txq)
+{ }
+
+#else  /* !CONFIG_NET_OOB */
 
 static inline bool netif_receive_oob_list(struct list_head *head)
 {
@@ -5350,20 +5402,22 @@ static inline bool netif_receive_oob_list(struct list_head *head)
 static inline void napi_schedule_oob(struct napi_struct *n)
 { }
 
-static inline void napi_complete_oob(struct napi_struct *n)
-{ }
-
 static inline void process_inband_tx_backlog(struct softnet_data *sd)
 { }
 
 static void process_inband_rx_backlog(struct softnet_data *sd)
 { }
 
-#endif
+#endif /* !CONFIG_NET_OOB */
 
 static int netif_rx_internal(struct sk_buff *skb)
 {
 	int ret;
+
+	if (netif_receive_oob(skb)) {
+		netif_schedule_oob(skb->dev);
+		return NET_RX_SUCCESS;
+	}
 
 	net_timestamp_check(READ_ONCE(net_hotdata.tstamp_prequeue), skb);
 
@@ -5405,7 +5459,7 @@ int __netif_rx(struct sk_buff *skb)
 {
 	int ret;
 
-	lockdep_assert_once(hardirq_count() | softirq_count());
+	lockdep_assert_once(running_oob() | hardirq_count() | softirq_count());
 
 	trace_netif_rx_entry(skb);
 	ret = netif_rx_internal(skb);
@@ -6465,9 +6519,15 @@ bool napi_complete_done(struct napi_struct *n, int work_done)
 	bool ret = true;
 
 	if (netif_oob_diversion(n->dev)) {
-		napi_complete_oob(n);
 		if (net_running_oob())
-			return true;
+			return napi_schedule_unprep(n);
+		/*
+		 * We get there only when the NAPI poll handler runs
+		 * from the inband stage, i.e. called from a non
+		 * oob-capable device which ingress traffic is
+		 * diverted to some oob netstack nevertheless.
+		 */
+		napi_schedule_oob(n);
 	}
 
 	/*
@@ -6633,8 +6693,16 @@ restart:
 	if (!napi)
 		return;
 
+	/*
+	 * Dovetail: can't compete with an oob-enabled device
+	 * currently diverting traffic to a companion core.
+	 */
+	if (netif_oob_diversion(napi->dev) && netdev_is_oob_capable(napi->dev))
+		return;
+
 	if (!IS_ENABLED(CONFIG_PREEMPT_RT))
 		preempt_disable();
+
 	for (;;) {
 		int work = 0;
 
@@ -7016,27 +7084,29 @@ static int __napi_poll(struct napi_struct *n, bool *repoll)
 		return work;
 	}
 
-	/* The NAPI context has more processing work, but busy-polling
-	 * is preferred. Exit early.
-	 */
-	if (napi_prefer_busy_poll(n)) {
-		if (napi_complete_done(n, work)) {
-			/* If timeout is not set, we need to make sure
-			 * that the NAPI is re-scheduled.
-			 */
-			napi_schedule(n);
-		}
-		return work;
-	}
-
-	if (n->gro_bitmask) {
-		/* flush too old packets
-		 * If HZ < 1000, flush all packets.
+	if (!net_running_oob()) {
+		/* The NAPI context has more processing work, but busy-polling
+		 * is preferred. Exit early.
 		 */
-		napi_gro_flush(n, HZ >= 1000);
-	}
+		if (napi_prefer_busy_poll(n)) {
+			if (napi_complete_done(n, work)) {
+				/* If timeout is not set, we need to make sure
+				 * that the NAPI is re-scheduled.
+				 */
+				napi_schedule(n);
+			}
+			return work;
+		}
 
-	gro_normal_list(n);
+		if (n->gro_bitmask) {
+			/* flush too old packets
+			 * If HZ < 1000, flush all packets.
+			 */
+			napi_gro_flush(n, HZ >= 1000);
+		}
+
+		gro_normal_list(n);
+	}
 
 	/* Some drivers may have called napi_schedule
 	 * prior to exhausting their budget.
@@ -12406,8 +12476,7 @@ static int __init net_dev_init(void)
 #endif
 #ifdef CONFIG_NET_OOB
 		INIT_LIST_HEAD(&sd->inband_rx_list);
-		raw_spin_lock_init(&sd->inband_rx_lock);
-		init_irq_work(&sd->inband_rx_work, kick_rx_inband);
+		sd->inband_rx_work = IRQ_WORK_INIT_HARD(kick_rx_inband);
 #endif
 		INIT_CSD(&sd->defer_csd, trigger_rx_softirq, sd);
 		spin_lock_init(&sd->defer_lock);

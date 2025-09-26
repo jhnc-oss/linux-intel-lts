@@ -312,9 +312,17 @@ static int mii_cnt;
 
 #ifdef CONFIG_FEC_OOB
 
+/*
+ * We won't cope with threaded irqs if oob I/O might be enabled for a
+ * device. Most of our interrupt-triggered work already happens out of
+ * IRQ context anyway (NAPI softirq, workqueues), so in practice, the
+ * cost is marginal, and at any rate, won't impact the oob mode.
+ */
+#define FEC_IRQ_FLAGS  IRQF_NO_THREAD
+
 static int fec_enet_get_irq_cnt(struct platform_device *pdev);
 
-static int fec_enable_oob(struct net_device *ndev)
+static int fec_enet_enable_oob(struct net_device *ndev)
 {
 	struct fec_enet_private *fep = netdev_priv(ndev);
 	int nr_irqs = fec_enet_get_irq_cnt(fep->pdev), n, ret = 0;
@@ -334,10 +342,13 @@ static int fec_enable_oob(struct net_device *ndev)
 	netif_tx_unlock_bh(ndev);
 	napi_enable(&fep->napi);
 
+	if (!ret)
+		pr_info("%s: enabled out-of-band I/O mode\n", netdev_name(ndev));
+
 	return ret;
 }
 
-static void fec_disable_oob(struct net_device *ndev)
+static void fec_enet_disable_oob(struct net_device *ndev)
 {
 	struct fec_enet_private *fep = netdev_priv(ndev);
 	int nr_irqs = fec_enet_get_irq_cnt(fep->pdev), n;
@@ -350,6 +361,69 @@ static void fec_disable_oob(struct net_device *ndev)
 
 	netif_tx_unlock_bh(ndev);
 	napi_enable(&fep->napi);
+
+	pr_info("%s: disabled out-of-band I/O mode\n", netdev_name(ndev));
+}
+
+static void release_inband_work(struct irq_work *irq_work)
+{
+	struct fec_enet_priv_tx_q *txq = container_of(irq_work, struct fec_enet_priv_tx_q, inband_irq_work);
+
+	while (txq->next_to_flush != READ_ONCE(txq->next_to_defer)) {
+		int ntf = txq->next_to_flush;
+		struct fec_inband_work *fl = txq->inband_flush + ntf;
+		dma_unmap_single(fl->dev, fl->addr, fl->size, DMA_TO_DEVICE);
+		txq->next_to_flush = (ntf + 1) % TX_RING_SIZE;
+	}
+}
+
+static void release_tx_mapping(struct sk_buff *skb,
+			struct fec_enet_priv_tx_q *txq,
+			struct device *dev, dma_addr_t addr, size_t size)
+{
+	if (!fec_net_oob() || !skb || !skb_is_oob_managed(skb)) {
+		if (fec_running_oob()) {
+			int ntd = txq->next_to_defer;
+			struct fec_inband_work *fl = txq->inband_flush + ntd;
+			fl->addr = addr;
+			fl->size = size;
+			fl->dev = dev;
+			WRITE_ONCE(txq->next_to_defer, (ntd + 1) % TX_RING_SIZE);
+			irq_work_queue(&txq->inband_irq_work);
+		} else {
+			dma_unmap_single(dev, addr, size, DMA_TO_DEVICE);
+		}
+	} else {
+		/*
+		 * An oob-managed storage should not be unmapped, this
+		 * operation is handled when required by the page pool
+		 * it belongs to. We only need to synchronize the CPU
+		 * caches for the specified I/O direction.
+		 */
+		dma_sync_single_for_cpu(dev, addr, size, DMA_TO_DEVICE);
+	}
+}
+
+static void fec_enet_init_ring_oob(struct fec_enet_priv_tx_q *txq)
+{
+	init_irq_work(&txq->inband_irq_work, release_inband_work);
+	txq->next_to_defer = 0;
+	txq->next_to_flush = 0;
+}
+
+#else  /* !CONFIG_FEC_OOB */
+
+#define FEC_IRQ_FLAGS  0
+
+static void release_tx_mapping(struct sk_buff *skb,
+			struct fec_enet_priv_tx_q *txq,
+			struct device *dev, dma_addr_t addr, size_t size)
+{
+	dma_sync_single_for_cpu(dev, addr, size, DMA_TO_DEVICE);
+}
+
+static inline void fec_enet_init_ring_oob(struct fec_enet_priv_tx_q *txq)
+{
 }
 
 #endif	/* !CONFIG_FEC_OOB */
@@ -561,7 +635,7 @@ static dma_addr_t get_dma_mapping(struct sk_buff *skb,
 {
 	dma_addr_t addr;
 
-	if (!fec_net_oob() || !skb_has_oob_storage(skb))
+	if (!fec_net_oob() || !skb_is_oob_managed(skb))
 		return dma_map_single(dev, ptr, size, dir);
 
 	/*
@@ -569,27 +643,10 @@ static dma_addr_t get_dma_mapping(struct sk_buff *skb,
 	 * it belongs to. We only need to to let the device get at the
 	 * pre-mapped DMA area for the specified I/O direction.
 	 */
-	addr = skb_oob_storage_addr(skb);
+	addr = skb_oob_dma_addr(skb);
 	dma_sync_single_for_device(dev, addr, size, dir);
 
 	return addr;
-}
-
-static void release_dma_mapping(struct sk_buff *skb,
-				struct device *dev, dma_addr_t addr, size_t size,
-				enum dma_data_direction dir)
-{
-	if (!fec_net_oob() || !skb || !skb_has_oob_storage(skb)) {
-		dma_unmap_single(dev, addr, size, dir);
-	} else {
-		/*
-		 * An oob-managed storage should not be unmapped, this
-		 * operation is handled when required by the page pool
-		 * it belongs to. We only need to synchronize the CPU
-		 * caches for the specified I/O direction.
-		 */
-		dma_sync_single_for_cpu(dev, addr, size, dir);
-	}
 }
 
 static struct bufdesc *
@@ -675,8 +732,8 @@ dma_mapping_error:
 	bdp = txq->bd.cur;
 	for (i = 0; i < frag; i++) {
 		bdp = fec_enet_get_nextdesc(bdp, &txq->bd);
-		release_dma_mapping(NULL, &fep->pdev->dev, fec32_to_cpu(bdp->cbd_bufaddr),
-				fec16_to_cpu(bdp->cbd_datlen), DMA_TO_DEVICE);
+		release_tx_mapping(NULL, txq, &fep->pdev->dev, fec32_to_cpu(bdp->cbd_bufaddr),
+				fec16_to_cpu(bdp->cbd_datlen));
 	}
 	return ERR_PTR(-ENOMEM);
 }
@@ -741,8 +798,7 @@ static int fec_enet_txq_submit_skb(struct fec_enet_priv_tx_q *txq,
 	if (nr_frags) {
 		last_bdp = fec_enet_txq_submit_frag_skb(txq, skb, ndev);
 		if (IS_ERR(last_bdp)) {
-			release_dma_mapping(skb, &fep->pdev->dev, addr,
-					buflen, DMA_TO_DEVICE);
+			release_tx_mapping(skb, txq, &fep->pdev->dev, addr, buflen);
 			dev_kfree_skb_any(skb);
 			return NETDEV_TX_OK;
 		}
@@ -1046,39 +1102,24 @@ fec_enet_start_xmit(struct sk_buff *skb, struct net_device *ndev)
 	unsigned short queue;
 	struct fec_enet_priv_tx_q *txq;
 	struct netdev_queue *nq;
-	int ret = 0;
+	enum netdev_tx ret;
 
 	queue = skb_get_queue_mapping(skb);
 	txq = fep->tx_queue[queue];
 	nq = netdev_get_tx_queue(ndev, queue);
 
-	/*
-	 * Lock out any sender running from the alternate execution
-	 * stage from other CPUs (i.e. oob vs in-band). Clearly,
-	 * in-band tasks should refrain from sending output through an
-	 * oob-enabled device when aiming at the lowest possible
-	 * latency for the oob players, but we still allow shared use
-	 * for flexibility though, which comes in handy when a single
-	 * NIC only is available to convey both kinds of traffic.
-	 */
-	netif_tx_lock_oob(nq);
-
 	if (skb_is_gso(skb))
 		ret = fec_enet_txq_submit_tso(txq, skb, ndev);
 	else
 		ret = fec_enet_txq_submit_skb(txq, skb, ndev);
-	if (ret)
-		return ret;
 
-	if (running_inband()) {
+	if (ret == NETDEV_TX_OK && running_inband()) {
 		entries_free = fec_enet_get_free_txdesc_num(txq);
 		if (entries_free <= txq->tx_stop_threshold)
 			netif_tx_stop_queue(nq);
 	}
 
-	netif_tx_unlock_oob(nq);
-
-	return NETDEV_TX_OK;
+	return ret;
 }
 
 /* Init RX & TX buffer descriptors
@@ -1126,20 +1167,20 @@ static void fec_enet_bd_init(struct net_device *dev)
 			if (txq->tx_buf[i].type == FEC_TXBUF_T_SKB) {
 				if (bdp->cbd_bufaddr &&
 				    !IS_TSO_HEADER(txq, fec32_to_cpu(bdp->cbd_bufaddr)))
-					release_dma_mapping(txq->tx_buf[i].buf_p,
-							 &fep->pdev->dev,
-							 fec32_to_cpu(bdp->cbd_bufaddr),
-							 fec16_to_cpu(bdp->cbd_datlen),
-							 DMA_TO_DEVICE);
+					release_tx_mapping(txq->tx_buf[i].buf_p,
+							txq,
+							&fep->pdev->dev,
+							fec32_to_cpu(bdp->cbd_bufaddr),
+							fec16_to_cpu(bdp->cbd_datlen));
 				if (txq->tx_buf[i].buf_p)
 					dev_kfree_skb_any(txq->tx_buf[i].buf_p);
 			} else if (txq->tx_buf[i].type == FEC_TXBUF_T_XDP_NDO) {
 				if (bdp->cbd_bufaddr)
-					release_dma_mapping(txq->tx_buf[i].buf_p,
-							 &fep->pdev->dev,
-							 fec32_to_cpu(bdp->cbd_bufaddr),
-							 fec16_to_cpu(bdp->cbd_datlen),
-							 DMA_TO_DEVICE);
+					release_tx_mapping(txq->tx_buf[i].buf_p,
+							txq,
+							&fep->pdev->dev,
+							fec32_to_cpu(bdp->cbd_bufaddr),
+							fec16_to_cpu(bdp->cbd_datlen));
 
 				if (txq->tx_buf[i].buf_p)
 					xdp_return_frame(txq->tx_buf[i].buf_p);
@@ -1601,11 +1642,11 @@ fec_enet_tx_queue(struct net_device *ndev, u16 queue_id, int budget)
 		if (txq->tx_buf[index].type == FEC_TXBUF_T_SKB) {
 			if (bdp->cbd_bufaddr &&
 			    !IS_TSO_HEADER(txq, fec32_to_cpu(bdp->cbd_bufaddr)))
-				release_dma_mapping(skb,
-						 &fep->pdev->dev,
-						 fec32_to_cpu(bdp->cbd_bufaddr),
-						 fec16_to_cpu(bdp->cbd_datlen),
-						 DMA_TO_DEVICE);
+				release_tx_mapping(skb,
+						txq,
+						&fep->pdev->dev,
+						fec32_to_cpu(bdp->cbd_bufaddr),
+						fec16_to_cpu(bdp->cbd_datlen));
 			bdp->cbd_bufaddr = cpu_to_fec32(0);
 			if (!skb)
 				goto tx_buf_done;
@@ -1621,11 +1662,11 @@ fec_enet_tx_queue(struct net_device *ndev, u16 queue_id, int budget)
 			if (txq->tx_buf[index].type == FEC_TXBUF_T_XDP_NDO) {
 				xdpf = txq->tx_buf[index].buf_p;
 				if (bdp->cbd_bufaddr)
-					release_dma_mapping(skb,
-							 &fep->pdev->dev,
-							 fec32_to_cpu(bdp->cbd_bufaddr),
-							 fec16_to_cpu(bdp->cbd_datlen),
-							 DMA_TO_DEVICE);
+					release_tx_mapping(skb,
+							txq,
+							&fep->pdev->dev,
+							fec32_to_cpu(bdp->cbd_bufaddr),
+							fec16_to_cpu(bdp->cbd_datlen));
 			} else {
 				page = txq->tx_buf[index].buf_p;
 			}
@@ -3550,7 +3591,13 @@ fec_enet_alloc_rxq_buffers(struct net_device *ndev, unsigned int queue)
 	rxq = fep->rx_queue[queue];
 	bdp = rxq->bd.base;
 
-	err = fec_enet_create_page_pool(fep, rxq, rxq->bd.ring_size);
+	/*
+	 * Create a page pool. Allocating four times the ring size is
+	 * a shameless heuristic aimed at coping with high traffic
+	 * pressure and/or (too) slow handling on the oob side
+	 * (i.e. excessive buffering).
+	 */
+	err = fec_enet_create_page_pool(fep, rxq, rxq->bd.ring_size * 4);
 	if (err < 0) {
 		netdev_err(ndev, "%s failed queue %d (%d)\n", __func__, queue, err);
 		return err;
@@ -3610,6 +3657,8 @@ fec_enet_alloc_txq_buffers(struct net_device *ndev, unsigned int queue)
 		}
 
 		bdp = fec_enet_get_nextdesc(bdp, &txq->bd);
+
+		fec_enet_init_ring_oob(txq);
 	}
 
 	/* Set the last buffer to wrap. */
@@ -4143,8 +4192,8 @@ static const struct net_device_ops fec_netdev_ops = {
 	.ndo_set_mac_address	= fec_set_mac_address,
 	.ndo_eth_ioctl		= phy_do_ioctl_running,
 #ifdef CONFIG_FEC_OOB
-	.ndo_enable_oob		= fec_enable_oob,
-	.ndo_disable_oob	= fec_disable_oob,
+	.ndo_enable_oob		= fec_enet_enable_oob,
+	.ndo_disable_oob	= fec_enet_disable_oob,
 #endif
 	.ndo_set_features	= fec_set_features,
 	.ndo_bpf		= fec_enet_bpf,
@@ -4656,7 +4705,7 @@ fec_probe(struct platform_device *pdev)
 			goto failed_irq;
 		}
 		ret = devm_request_irq(&pdev->dev, irq, fec_enet_interrupt,
-				       0, pdev->name, ndev);
+				       FEC_IRQ_FLAGS, pdev->name, ndev);
 		if (ret)
 			goto failed_irq;
 

@@ -50,7 +50,6 @@
 #include <net/pkt_sched.h>
 #endif
 #include <linux/string.h>
-#include <linux/skbuff.h>
 #include <linux/skbuff_ref.h>
 #include <linux/splice.h>
 #include <linux/cache.h>
@@ -351,6 +350,9 @@ static struct sk_buff *napi_skb_cache_get(void)
 	struct napi_alloc_cache *nc = this_cpu_ptr(&napi_alloc_cache);
 	struct sk_buff *skb;
 
+	/* oob calls should go through __napi_build_skb() first. */
+	WARN_ON_ONCE(running_oob());
+
 	local_lock_nested_bh(&napi_alloc_cache.bh_lock);
 	if (unlikely(!nc->skb_count)) {
 		nc->skb_count = kmem_cache_alloc_bulk(net_hotdata.skbuff_cache,
@@ -480,7 +482,7 @@ struct sk_buff *__build_skb(void *data, unsigned int frag_size)
 
 	if (running_oob()) {
 		skb = get_oob_skb();
-		if (unlikely(!skb))
+		if (unlikely(WARN_ON_ONCE(!skb)))
 			return NULL;
 	} else {
 		skb = kmem_cache_alloc(net_hotdata.skbuff_cache,
@@ -546,11 +548,18 @@ static struct sk_buff *__napi_build_skb(void *data, unsigned int frag_size)
 {
 	struct sk_buff *skb;
 
-	skb = napi_skb_cache_get();
-	if (unlikely(!skb))
-		return NULL;
+	if (running_oob()) {
+		skb = get_oob_skb();
+		if (unlikely(!skb))
+			return NULL;
+	} else {
+		skb = napi_skb_cache_get();
+		if (unlikely(!skb))
+			return NULL;
 
-	memset(skb, 0, offsetof(struct sk_buff, tail));
+		memset(skb, 0, offsetof(struct sk_buff, tail));
+	}
+
 	__build_skb_around(skb, data, frag_size);
 
 	return skb;
@@ -581,33 +590,26 @@ EXPORT_SYMBOL(napi_build_skb);
 
 #ifdef CONFIG_NET_OOB
 
-unsigned int sysctl_max_oob_skb __read_mostly = 1024;
+unsigned int sysctl_max_oob_skb __read_mostly = 4096;
 EXPORT_SYMBOL(sysctl_max_oob_skb);
 
 __weak void free_skb_oob(struct sk_buff *skb)
 { }
 
-bool recycle_skb_oob(struct sk_buff *skb)
+bool skb_release_oob(struct sk_buff *skb)
 {
 	/*
-	 * Hand the buffer release over the out-of-band core either if
-	 * the latter owns the skb data or we are currently running
-	 * oob.
+	 * If the buffer was not already released by the out-of-band
+	 * core, hand it the buffer for release either if it manages
+	 * the data storage or we are currently running oob.
 	 */
-	if (running_oob() || skb_has_oob_storage(skb)) {
+	if (!skb_is_oob_released(skb) && (running_oob() || skb_is_oob_managed(skb))) {
+		skb_mark_oob_released(skb);
 		free_skb_oob(skb);
 		return true;
 	}
 
 	return false;
-}
-
-void finalize_skb_inband(struct sk_buff *skb)
-{
-	if (skb->fclone != SKB_FCLONE_UNAVAILABLE)
-		__kfree_skb(skb);
-	else
-		__napi_kfree_skb(skb, SKB_CONSUMED);
 }
 
 /*
@@ -653,6 +655,7 @@ struct sk_buff *get_oob_skb(void)
 		raw_spin_unlock_irqrestore(&c->lock, flags);
 		memset(skb, 0, offsetof(struct sk_buff, tail));
 		skb_mark_oob(skb);
+		skb_clear_oob_released(skb);
 	} else {
 		raw_spin_unlock_irqrestore(&c->lock, flags);
 	}
@@ -672,10 +675,38 @@ void put_oob_skb(struct sk_buff *skb)
 }
 EXPORT_SYMBOL(put_oob_skb);
 
+/**
+ * skb_oob_dma_addr - Return the DMA address of a pre-mapped buffer
+ * obtained from an oob pool.
+ *
+ * DMA_MAPPING_ERROR is returned if the skb is dataless, or its
+ * storage area does not belong to an oob page pool.
+ */
+dma_addr_t skb_oob_dma_addr(const struct sk_buff *skb)
+{
+	struct page *page = skb->head ? virt_to_page(skb->head) : NULL;
+	struct page_pool *pool;
+
+	if (!page)
+		return DMA_MAPPING_ERROR;
+
+	pool = napi_pp_get_pool(page_to_netmem(page));
+	if (!pool || !page_pool_is_oob(pool))
+		return DMA_MAPPING_ERROR;
+
+	return page_pool_get_dma_addr(page);
+}
+EXPORT_SYMBOL(skb_oob_dma_addr);
+
 #else  /* !CONFIG_NET_OOB */
 
 static inline void init_oob_cache(void)
 { }
+
+static inline void put_oob_skb(struct sk_buff *skb)
+{
+	BUG();
+}
 
 #endif	/* !CONFIG_NET_OOB */
 
@@ -920,6 +951,13 @@ struct sk_buff *napi_alloc_skb(struct napi_struct *napi, unsigned int len)
 	bool pfmemalloc;
 	void *data;
 
+	/*
+	 * Only napi_build_skb() is allowed from the out-of-band
+	 * stage.
+	 */
+	if (WARN_ON_ONCE(running_oob()))
+		return NULL;
+
 	DEBUG_NET_WARN_ON_ONCE(!in_softirq());
 	len += NET_SKB_PAD + NET_IP_ALIGN;
 
@@ -1132,6 +1170,24 @@ int skb_cow_data_for_xdp(struct page_pool *pool, struct sk_buff **pskb,
 EXPORT_SYMBOL(skb_cow_data_for_xdp);
 
 #if IS_ENABLED(CONFIG_PAGE_POOL)
+struct page_pool *napi_pp_get_pool(netmem_ref netmem)
+{
+	netmem = netmem_compound_head(netmem);
+
+	/* page->pp_magic is OR'ed with PP_SIGNATURE after the allocation
+	 * in order to preserve any existing bits, such as bit 0 for the
+	 * head page of compound page and bit 1 for pfmemalloc page, so
+	 * mask those bits for freeing side when doing below checking,
+	 * and page_is_pfmemalloc() is checked in __page_pool_put_page()
+	 * to avoid recycling the pfmemalloc page.
+	 */
+	if (unlikely(!is_pp_netmem(netmem)))
+		return NULL;
+
+	return netmem_get_pp(netmem);
+}
+EXPORT_SYMBOL(napi_pp_get_pool);
+
 bool napi_pp_put_page(netmem_ref netmem)
 {
 	netmem = netmem_compound_head(netmem);
@@ -1314,7 +1370,7 @@ static void skb_release_all(struct sk_buff *skb, enum skb_drop_reason reason)
 
 void __kfree_skb(struct sk_buff *skb)
 {
-	if (recycle_skb_oob(skb))
+	if (skb_release_oob(skb))
 		return;
 
 	skb_release_all(skb, SKB_DROP_REASON_NOT_SPECIFIED);
@@ -1574,6 +1630,11 @@ static void napi_skb_cache_put(struct sk_buff *skb)
 	struct napi_alloc_cache *nc = this_cpu_ptr(&napi_alloc_cache);
 	u32 i;
 
+	if (skb_is_oob(skb)) {
+		put_oob_skb(skb);
+		return;
+	}
+
 	if (!kasan_mempool_poison_object(skb))
 		return;
 
@@ -1594,7 +1655,7 @@ static void napi_skb_cache_put(struct sk_buff *skb)
 
 void __napi_kfree_skb(struct sk_buff *skb, enum skb_drop_reason reason)
 {
-	if (recycle_skb_oob(skb))
+	if (skb_release_oob(skb))
 		return;
 
 	skb_release_all(skb, reason);
@@ -1636,12 +1697,11 @@ void napi_consume_skb(struct sk_buff *skb, int budget)
 		return;
 	}
 
-	if (recycle_skb_oob(skb))
+	if (skb_release_oob(skb))
 		return;
 
 	skb_release_all(skb, SKB_CONSUMED);
-	if (!__skb_oob_free_head(skb))
-		napi_skb_cache_put(skb);
+	napi_skb_cache_put(skb);
 }
 EXPORT_SYMBOL(napi_consume_skb);
 
@@ -1726,6 +1786,7 @@ static struct sk_buff *__skb_clone(struct sk_buff *n, struct sk_buff *skb)
 	C(data);
 	C(truesize);
 	refcount_set(&n->users, 1);
+	skb_init_inband(n);
 
 	atomic_inc(&(skb_shinfo(skb)->dataref));
 	skb->cloned = 1;
@@ -2213,8 +2274,6 @@ struct sk_buff *skb_clone(struct sk_buff *skb, gfp_t gfp_mask)
 		n->fclone = SKB_FCLONE_UNAVAILABLE;
 	}
 
-	__skb_inband_clone(n);
-
 	return __skb_clone(n, skb);
 }
 EXPORT_SYMBOL(skb_clone);
@@ -2453,6 +2512,7 @@ int pskb_expand_head(struct sk_buff *skb, int nhead, int ntail,
 	skb->hdr_len  = 0;
 	skb->nohdr    = 0;
 	atomic_set(&skb_shinfo(skb)->dataref, 1);
+	skb_init_inband(skb);
 
 	skb_metadata_clear(skb);
 
@@ -6123,7 +6183,7 @@ EXPORT_SYMBOL(__skb_warn_lro_forwarding);
 void kfree_skb_partial(struct sk_buff *skb, bool head_stolen)
 {
 	if (head_stolen) {
-		if (!recycle_skb_oob(skb)) {
+		if (!skb_release_oob(skb)) {
 			skb_release_head_state(skb);
 			if (!__skb_oob_free_head(skb))
 				kmem_cache_free(net_hotdata.skbuff_cache, skb);
@@ -6837,6 +6897,7 @@ static int pskb_carve_inside_header(struct sk_buff *skb, const u32 off,
 	skb->hdr_len = 0;
 	skb->nohdr = 0;
 	atomic_set(&skb_shinfo(skb)->dataref, 1);
+	skb_init_inband(skb);
 
 	return 0;
 }
@@ -6973,6 +7034,7 @@ static int pskb_carve_inside_nonlinear(struct sk_buff *skb, const u32 off,
 	skb->len -= off;
 	skb->data_len = skb->len;
 	atomic_set(&skb_shinfo(skb)->dataref, 1);
+	skb_init_inband(skb);
 
 	return 0;
 }

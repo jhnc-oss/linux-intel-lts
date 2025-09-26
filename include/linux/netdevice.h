@@ -3291,7 +3291,6 @@ struct softnet_data {
 #endif
 #ifdef CONFIG_NET_OOB
 	struct list_head	inband_rx_list; /* Inband skbs received oob */
-	hard_spinlock_t		inband_rx_lock;
 	struct irq_work		inband_rx_work;
 #endif
 	struct Qdisc		*output_queue;
@@ -4378,6 +4377,9 @@ void netif_device_attach(struct net_device *dev);
 
 bool netif_receive_oob(struct sk_buff *skb);
 
+int dev_queue_recv_nit(struct sk_buff *skb,
+		struct net_device *dev);
+
 /**
  *	netif_oob_diversion - is the ingress traffic diverted for out-of-band handling?
  *	@dev: network device
@@ -4390,14 +4392,21 @@ static inline bool netif_oob_diversion(const struct net_device *dev)
 	return test_bit(__LINK_STATE_OOB, &dev->state);
 }
 
-static inline void netif_enable_oob_diversion(struct net_device *dev)
+static inline int netif_enable_oob_diversion(struct net_device *dev)
 {
 	const struct net_device_ops *ops = dev->netdev_ops;
+	int ret;
 
-	if (ops->ndo_enable_oob)
-		ops->ndo_enable_oob(dev);
+	if (ops->ndo_enable_oob) {
+		ret = ops->ndo_enable_oob(dev);
+		if (ret)
+			return ret;
+	}
 
+	smp_mb__before_atomic();
 	set_bit(__LINK_STATE_OOB, &dev->state);
+
+	return 0;
 }
 
 static inline void netif_disable_oob_diversion(struct net_device *dev)
@@ -4434,12 +4443,16 @@ static inline void netif_disable_oob_port(struct net_device *dev)
 	smp_mb__after_atomic();
 }
 
+int napi_poll_oob(struct napi_struct *n, struct list_head *repoll);
+
 /* Out-of-band hooks implemented by the companion core. */
 void napi_schedule_oob(struct napi_struct *n);
-void napi_complete_oob(struct napi_struct *n);
 bool netif_deliver_oob(struct sk_buff *skb);
+void netif_schedule_oob(struct net_device *dev);
+void netif_rx_nomem_oob(struct net_device *dev);
 void netif_tx_lock_oob(struct netdev_queue *txq);
 void netif_tx_unlock_oob(struct netdev_queue *txq);
+void netif_tx_wake_oob(struct netdev_queue *txq); /* rcu_read locked */
 void process_inband_tx_backlog(struct softnet_data *sd);
 int netif_oob_switch_port(struct net_device *dev, bool enabled);
 bool netif_oob_get_port(struct net_device *dev);
@@ -4476,7 +4489,21 @@ static inline void netdev_set_oob_capable(struct net_device *dev)
 {
 }
 
-static inline bool netdev_is_oob_capable(struct net_device *dev)
+static inline bool netif_receive_oob(struct sk_buff *skb)
+{
+	return false;
+}
+
+static inline void netif_schedule_oob(struct net_device *dev)
+{
+}
+
+static inline void netif_rx_nomem_oob(struct net_device *dev)
+{
+	BUG();
+}
+
+static inline bool netif_oob_diversion(const struct net_device *dev)
 {
 	return false;
 }
@@ -4486,12 +4513,7 @@ static inline bool netif_oob_port(struct net_device *dev)
 	return false;
 }
 
-static inline bool netif_oob_diversion(const struct net_device *dev)
-{
-	return false;
-}
-
-static inline bool netif_receive_oob(struct sk_buff *skb)
+static inline bool netdev_is_oob_capable(struct net_device *dev)
 {
 	return false;
 }
@@ -4501,6 +4523,10 @@ static inline void netif_tx_lock_oob(struct netdev_queue *txq)
 }
 
 static inline void netif_tx_unlock_oob(struct netdev_queue *txq)
+{
+}
+
+static inline void netif_tx_wake_oob(struct netdev_queue *txq)
 {
 }
 
@@ -4586,6 +4612,7 @@ static inline void __netif_tx_lock(struct netdev_queue *txq, int cpu)
 	spin_lock(&txq->_xmit_lock);
 	/* Pairs with READ_ONCE() in __dev_queue_xmit() */
 	WRITE_ONCE(txq->xmit_lock_owner, cpu);
+	netif_tx_lock_oob(txq);
 }
 
 static inline bool __netif_tx_acquire(struct netdev_queue *txq)
@@ -4604,6 +4631,7 @@ static inline void __netif_tx_lock_bh(struct netdev_queue *txq)
 	spin_lock_bh(&txq->_xmit_lock);
 	/* Pairs with READ_ONCE() in __dev_queue_xmit() */
 	WRITE_ONCE(txq->xmit_lock_owner, smp_processor_id());
+	netif_tx_lock_oob(txq);
 }
 
 static inline bool __netif_tx_trylock(struct netdev_queue *txq)
@@ -4613,12 +4641,14 @@ static inline bool __netif_tx_trylock(struct netdev_queue *txq)
 	if (likely(ok)) {
 		/* Pairs with READ_ONCE() in __dev_queue_xmit() */
 		WRITE_ONCE(txq->xmit_lock_owner, smp_processor_id());
+		netif_tx_lock_oob(txq);
 	}
 	return ok;
 }
 
 static inline void __netif_tx_unlock(struct netdev_queue *txq)
 {
+	netif_tx_unlock_oob(txq);
 	/* Pairs with READ_ONCE() in __dev_queue_xmit() */
 	WRITE_ONCE(txq->xmit_lock_owner, -1);
 	spin_unlock(&txq->_xmit_lock);
@@ -4626,6 +4656,7 @@ static inline void __netif_tx_unlock(struct netdev_queue *txq)
 
 static inline void __netif_tx_unlock_bh(struct netdev_queue *txq)
 {
+	netif_tx_unlock_oob(txq);
 	/* Pairs with READ_ONCE() in __dev_queue_xmit() */
 	WRITE_ONCE(txq->xmit_lock_owner, -1);
 	spin_unlock_bh(&txq->_xmit_lock);
