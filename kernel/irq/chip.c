@@ -728,8 +728,10 @@ static bool irq_may_run(struct irq_desc *desc)
 		WARN_ON_ONCE(irq_pipeline_debug() && !in_pipeline());
 		if (irqd_is_wakeup_armed(&desc->irq_data))
 			return true;
+#ifdef CONFIG_IRQ_PIPELINE
 		if (irq_active_on_this_cpu(desc))
 			return true;
+#endif
 	} else if (irq_pm_check_wakeup(desc))
 		return false;
 
