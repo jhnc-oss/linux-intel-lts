@@ -12,9 +12,6 @@
 0007-btrfs-implement-partial-deletion-of-RAID-stripe-exte.patch
 0008-btrfs-don-t-use-btrfs_set_item_key_safe-on-RAID-stri.patch
 
-#CVE-2025-21751
-0009-net-mlx5-HWS-change-error-flow-on-matcher-disconnect.patch
-
 #CVE-2025-21709
 0010-kernel-be-more-careful-about-dup_mmap-failures-and-u.patch
 
@@ -167,3 +164,8 @@
 #CVE-2025-39677 
 0004-net-sched-Fix-backlog-accounting-in-qdisc_dequeue_in.patch
 
+#CVE-2025-39859
+0001-ptp-ocp-fix-use-after-free-bugs-causing-by-ptp_ocp_w.patch
+
+#CVE-2025-39816
+0002-io_uring-kbuf-always-use-READ_ONCE-to-read-ring-prov.patch
