@@ -166,3 +166,13 @@
 
 #CVE-2025-39816
 0002-io_uring-kbuf-always-use-READ_ONCE-to-read-ring-prov.patch
+
+#CVE-2025-39925
+0001-can-j1939-implement-NETDEV_UNREGISTER-notification-h.patch
+
+#CVE-2025-39905
+0002-net-phylink-add-lock-for-serializing-concurrent-pl-p.patch
+
+#CVE-2025-39933
+0003-smb-client-let-recv_done-verify-data_offset-data_len.patch
+
