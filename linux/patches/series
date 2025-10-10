@@ -82,9 +82,6 @@
 #CVE-2025-22107
 0036-net-dsa-sja1105-fix-kasan-out-of-bounds-warning-in-s.patch
 
-#CVE-2025-22106
-0037-vmxnet3-unregister-xdp-rxq-info-in-the-reset-path.patch
-
 #CVE-2025-22105
 0038-bonding-return-detailed-error-when-loading-native-XD.patch
 0039-bonding-check-xdp-prog-when-set-bond-mode.patch
