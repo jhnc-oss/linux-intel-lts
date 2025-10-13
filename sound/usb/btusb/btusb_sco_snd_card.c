@@ -20,7 +20,6 @@
 #include <linux/string.h>
 #include <linux/usb.h>
 #include <linux/usbdevice_fs.h>
-#include <linux/version.h>
 #include <net/bluetooth/bluetooth.h>
 #include <net/bluetooth/hci.h>
 #include <sound/core.h>
@@ -228,7 +227,7 @@ static void btusb_isoc_prepare_tx_urb(struct btusb_data *data)
 	spin_unlock_irqrestore(&data->txlock, flags);
 
 	if (period_elapsed == 1) {
-		period_elapsed = 0;
+		//period_elapsed = 0;
 		return snd_pcm_period_elapsed(data->playback_stream);
 	}
 }
@@ -285,7 +284,7 @@ static void process_sco_buffer(struct btusb_data *data)
 	spin_lock_irqsave(&data->rxlock, flags);
 	data->capture_hwptr_done  = (hw_ptr + sco_data_count) %
 						runtime->dma_bytes;
-	hw_ptr = data->capture_hwptr_done;
+	//hw_ptr = data->capture_hwptr_done;
 	spin_unlock_irqrestore(&data->rxlock, flags);
 }
 
