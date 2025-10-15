@@ -134,9 +134,6 @@
 #CVE-2025-38311
 0018-iavf-get-rid-of-the-crit-lock.patch
 
-#CVE-2025-38105
-0021-ALSA-usb-audio-Kill-timer-properly-at-removal.patch
-
 #CVE-2025-38207
 0022-mm-fix-uprobe-pte-be-overwritten-when-expanding-vma.patch
 
