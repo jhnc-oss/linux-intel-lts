@@ -55,3 +55,12 @@
 
 #CVE-2025-37906
 0028-ublk-fix-race-between-io_uring_cmd_complete_in_task-.patch
+
+#CVE-2025-39933
+0001-smb-client-let-recv_done-verify-data_offset-data_len.patch
+
+#CVE-2025-39905
+0002-net-phylink-add-lock-for-serializing-concurrent-pl-p.patch
+
+#CVE-2025-39910
+0004-mm-vmalloc-mm-kasan-respect-gfp-mask-in-kasan_popula.patch
