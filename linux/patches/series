@@ -173,3 +173,6 @@
 #CVE-2025-39933
 0003-smb-client-let-recv_done-verify-data_offset-data_len.patch
 
+#CVE-2025-39981
+0001-Bluetooth-MGMT-Fix-possible-UAFs.patch
+
