@@ -670,7 +670,3 @@
 
 #CVE-2025-39764
 0022-netfilter-ctnetlink-remove-refcounting-in-expectatio.patch
-
-#CVE-2025-39797
-0023-xfrm-Duplicate-SPI-Handling.patch
-
