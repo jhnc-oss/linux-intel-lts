@@ -17,12 +17,13 @@
 #include "type_support.h"
 #include "misc_support.h"
 #include "assert_support.h"
-#include "math_support.h"
 #include "ia_css_rbm_trace.h"
 
 #ifndef __IA_CSS_RBM_MANIFEST_INLINE__
 #include "ia_css_rbm_manifest_impl.h"
 #endif /* __IA_CSS_RBM_MANIFEST_INLINE__ */
+
+#include "math_support.h"
 
 STORAGE_CLASS_INLINE void
 ia_css_rbm_print_with_header(

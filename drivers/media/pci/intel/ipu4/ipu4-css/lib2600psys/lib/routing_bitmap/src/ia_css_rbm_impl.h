@@ -16,8 +16,9 @@
 #include "type_support.h"
 #include "misc_support.h"
 #include "assert_support.h"
-#include "math_support.h"
 #include "ia_css_rbm_trace.h"
+
+#include "math_support.h"
 
 STORAGE_CLASS_INLINE int ia_css_rbm_compute_weight(
 	const ia_css_rbm_t bitmap);
