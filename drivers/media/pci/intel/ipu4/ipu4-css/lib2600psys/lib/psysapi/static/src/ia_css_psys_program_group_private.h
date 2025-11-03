@@ -22,8 +22,9 @@
 #include "vied_nci_psys_resource_model.h"
 #include "ia_css_rbm_manifest_types.h"
 #include <type_support.h>
-#include <math_support.h>
 #include <platform_support.h>
+
+#include <math_support.h>
 
 #define SIZE_OF_PROGRAM_GROUP_MANIFEST_STRUCT_IN_BITS \
 	((IA_CSS_KERNEL_BITMAP_BITS) \
