@@ -1,6 +1,3 @@
-#CVE-2024-57995
-0001-wifi-ath12k-fix-read-pointer-after-free-in-ath12k_ma.patch
-
 #CVE-2024-52560
 0004-fs-ntfs3-Add-more-checks-in-mi_enum_attr-part-2.patch
 0005-fs-ntfs3-Mark-inode-as-bad-as-soon-as-error-detected.patch
@@ -29,18 +26,11 @@
 #CVE-2025-40325
 0001-md-raid10-wait-barrier-before-returning-discard-requ.patch
 
-#CVE-2025-37860
-0003-sfc-rip-out-MDIO-support.patch
-0004-sfc-fix-NULL-dereferences-in-ef100_process_design_pa.patch
-
 #CVE-2025-23132
 0007-f2fs-quota-fix-to-avoid-warning-in-dquot_writeback_d.patch
 
 #CVE-2025-23131
 0008-dlm-prevent-NPD-when-writing-a-positive-value-to-eve.patch
-
-#CVE-2025-23130
-0010-f2fs-fix-to-avoid-panic-once-fallocation-fails-for-p.patch
 
 #CVE-2025-22127
 0012-f2fs-fix-potential-deadloop-in-prepare_compress_over.patch
@@ -81,10 +71,6 @@
 
 #CVE-2025-22107
 0036-net-dsa-sja1105-fix-kasan-out-of-bounds-warning-in-s.patch
-
-#CVE-2025-22105
-0038-bonding-return-detailed-error-when-loading-native-XD.patch
-0039-bonding-check-xdp-prog-when-set-bond-mode.patch
 
 #CVE-2025-23129
 0040-wifi-ath11k-Clear-affinity-hint-before-calling-ath11.patch
@@ -139,9 +125,6 @@
 
 #CVE-2025-38627
 0001-f2fs-compress-fix-UAF-of-f2fs_inode_info-in-f2fs_fre.patch
-
-#CVE-2025-38643 
-0002-wifi-cfg80211-Add-missing-lock-in-cfg80211_check_and.patch
 
 #CVE-2025-38621
 0003-md-make-rdev_addable-usable-for-rcu-mode.patch
