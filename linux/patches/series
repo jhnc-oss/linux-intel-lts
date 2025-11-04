@@ -159,3 +159,21 @@
 #CVE-2025-39981
 0001-Bluetooth-MGMT-Fix-possible-UAFs.patch
 
+#CVE-2025-40077
+0001-f2fs-fix-to-avoid-overflow-while-left-shift-operatio.patch
+
+#CVE-2025-40086
+0002-drm-xe-Avoid-evicting-object-of-the-same-vm-in-none-.patch
+0003-drm-xe-Don-t-allow-evicting-of-BOs-in-same-VM-in-arr.patch
+
+#CVE-2025-40064
+0004-smc-Fix-use-after-free-in-__pnet_find_base_ndev.patch
+
+#CVE-2025-40075
+0005-net-dst-introduce-dst-dev_rcu.patch
+0006-tcp_metrics-use-dst_dev_net_rcu.patch
+
+#CVE-2025-40074
+0007-ipv4-start-using-dst_dev_rcu.patch
+
+
