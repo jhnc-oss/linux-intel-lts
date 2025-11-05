@@ -452,9 +452,6 @@
 #CVE-2025-21881
 0001-uprobes-Reject-the-shared-zeropage-in-uprobe_write_o.patch
 
-#CVE-2025-21861
-0001-mm-migrate_device-don-t-add-folio-to-be-freed-to-LRU.patch
-
 #CVE-2023-53001
 0001-drm-drm_vma_manager-Add-drm_vma_node_allow_once.patch
 
@@ -510,9 +507,6 @@
 0018-ext4-introduce-ITAIL-helper.patch
 0019-ext4-fix-out-of-bound-read-in-ext4_xattr_inode_dec_r.patch
 
-#CVE-2025-22127
-0020-f2fs-fix-potential-deadloop-in-prepare_compress_over.patch
-
 #CVE-2025-23130
 0021-f2fs-fix-to-avoid-panic-once-fallocation-fails-for-p.patch
 
@@ -520,9 +514,6 @@
 0022-f2fs-avoid-dead-loop-in-f2fs_issue_checkpoint.patch
 0023-f2fs-move-release-of-block-devices-to-after-kill_blo.patch
 0024-f2fs-quota-fix-to-avoid-warning-in-dquot_writeback_d.patch
-
-#CVE-2025-23143
-0025-net-Fix-null-ptr-deref-by-sock_lock_init_class_and_n.patch
 
 #CVE-2025-37807
 0026-bpf-Fix-kmemleak-warning-for-percpu-hashmap.patch
@@ -602,9 +593,6 @@
 
 #CVE-2022-50167
 0021-bpf-fix-potential-32-bit-overflow-when-accessing-ARR.patch
-
-#CVE-2025-38236
-0022-af_unix-Don-t-leave-consecutive-consumed-OOB-skbs.patch
 
 #CVE-2025-38234
 0023-sched-rt-Fix-race-in-push_rt_task.patch
