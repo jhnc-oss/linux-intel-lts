@@ -1,0 +1,41 @@
+From 41275301c0caa183d392a4ba7df76a884c35f3d5 Mon Sep 17 00:00:00 2001
+From: Kai Ye <yekai13@huawei.com>
+Date: Sat, 22 Oct 2022 01:17:44 +0000
+Subject: [PATCH 36/49] crypto: hisilicon/qm - increase the memory of local
+ variables
+
+Increase the buffer to prevent stack overflow by fuzz test. The maximum
+length of the qos configuration buffer is 256 bytes. Currently, the value
+of the 'val buffer' is only 32 bytes. The sscanf does not check the dest
+memory length. So the 'val buffer' may stack overflow.
+
+Signed-off-by: Kai Ye <yekai13@huawei.com>
+Signed-off-by: Herbert Xu <herbert@gondor.apana.org.au>
+---
+ drivers/crypto/hisilicon/qm.c | 3 +--
+ 1 file changed, 1 insertion(+), 2 deletions(-)
+
+diff --git a/drivers/crypto/hisilicon/qm.c b/drivers/crypto/hisilicon/qm.c
+index 58e995db3783..bf3dce6fc894 100644
+--- a/drivers/crypto/hisilicon/qm.c
++++ b/drivers/crypto/hisilicon/qm.c
+@@ -268,7 +268,6 @@
+ #define QM_QOS_MIN_CIR_B		100
+ #define QM_QOS_MAX_CIR_U		6
+ #define QM_QOS_MAX_CIR_S		11
+-#define QM_QOS_VAL_MAX_LEN		32
+
+ #define QM_AUTOSUSPEND_DELAY		3000
+
+@@ -4201,7 +4200,7 @@ static ssize_t qm_algqos_write(struct file *filp, const char __user *buf,
+ 	char tbuf[QM_DBG_READ_LEN];
+ 	int tmp1, bus, device, function;
+ 	char tbuf_bdf[QM_DBG_READ_LEN] = {0};
+-	char val_buf[QM_QOS_VAL_MAX_LEN] = {0};
++	char val_buf[QM_DBG_READ_LEN] = {0};
+ 	unsigned int fun_index;
+ 	unsigned long val = 0;
+ 	int len, ret;
+--
+2.43.0
+

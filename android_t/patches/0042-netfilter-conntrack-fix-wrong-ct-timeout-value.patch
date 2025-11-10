@@ -1,0 +1,118 @@
+From e9d58cbff09913b8dd8a773eeb417a7a85bd8814 Mon Sep 17 00:00:00 2001
+From: Tzung-Bi Shih <tzungbi@kernel.org>
+Date: Wed, 19 Apr 2023 13:15:26 +0800
+Subject: [PATCH 42/49] netfilter: conntrack: fix wrong ct->timeout value
+
+(struct nf_conn)->timeout is an interval before the conntrack
+confirmed.  After confirmed, it becomes a timestamp.
+
+It is observed that timeout of an unconfirmed conntrack:
+- Set by calling ctnetlink_change_timeout(). As a result,
+  `nfct_time_stamp` was wrongly added to `ct->timeout` twice.
+- Get by calling ctnetlink_dump_timeout(). As a result,
+  `nfct_time_stamp` was wrongly subtracted.
+
+Call Trace:
+ <TASK>
+ dump_stack_lvl
+ ctnetlink_dump_timeout
+ __ctnetlink_glue_build
+ ctnetlink_glue_build
+ __nfqnl_enqueue_packet
+ nf_queue
+ nf_hook_slow
+ ip_mc_output
+ ? __pfx_ip_finish_output
+ ip_send_skb
+ ? __pfx_dst_output
+ udp_send_skb
+ udp_sendmsg
+ ? __pfx_ip_generic_getfrag
+ sock_sendmsg
+
+Separate the 2 cases in:
+- Setting `ct->timeout` in __nf_ct_set_timeout().
+- Getting `ct->timeout` in ctnetlink_dump_timeout().
+
+Pablo appends:
+
+Update ctnetlink to set up the timeout _after_ the IPS_CONFIRMED flag is
+set on, otherwise conntrack creation via ctnetlink breaks.
+
+Note that the problem described in this patch occurs since the
+introduction of the nfnetlink_queue conntrack support, select a
+sufficiently old Fixes: tag for -stable kernel to pick up this fix.
+
+Fixes: a4b4766c3ceb ("netfilter: nfnetlink_queue: rename related to nfqueue attaching conntrack info")
+Signed-off-by: Tzung-Bi Shih <tzungbi@kernel.org>
+Signed-off-by: Pablo Neira Ayuso <pablo@netfilter.org>
+---
+ include/net/netfilter/nf_conntrack_core.h | 13 +++++++++++++
+ net/netfilter/nf_conntrack_netlink.c      | 15 +++++++++------
+ 2 files changed, 22 insertions(+), 6 deletions(-)
+
+diff --git a/include/net/netfilter/nf_conntrack_core.h b/include/net/netfilter/nf_conntrack_core.h
+index 2d524782f53b..2c8a83f41034 100644
+--- a/include/net/netfilter/nf_conntrack_core.h
++++ b/include/net/netfilter/nf_conntrack_core.h
+@@ -84,4 +84,17 @@ void nf_conntrack_lock(spinlock_t *lock);
+
+ extern spinlock_t nf_conntrack_expect_lock;
+
++/* ctnetlink code shared by both ctnetlink and nf_conntrack_bpf */
++
++static inline void __nf_ct_set_timeout(struct nf_conn *ct, u64 timeout)
++{
++	if (timeout > INT_MAX)
++		timeout = INT_MAX;
++
++	if (nf_ct_is_confirmed(ct))
++		WRITE_ONCE(ct->timeout, nfct_time_stamp + (u32)timeout);
++	else
++		ct->timeout = (u32)timeout;
++}
++
+ #endif /* _NF_CONNTRACK_CORE_H */
+diff --git a/net/netfilter/nf_conntrack_netlink.c b/net/netfilter/nf_conntrack_netlink.c
+index 50f7531221c3..700036f98661 100644
+--- a/net/netfilter/nf_conntrack_netlink.c
++++ b/net/netfilter/nf_conntrack_netlink.c
+@@ -170,7 +170,12 @@ static int ctnetlink_dump_status(struct sk_buff *skb, const struct nf_conn *ct)
+ static int ctnetlink_dump_timeout(struct sk_buff *skb, const struct nf_conn *ct,
+ 				  bool skip_zero)
+ {
+-	long timeout = nf_ct_expires(ct) / HZ;
++	long timeout;
++
++	if (nf_ct_is_confirmed(ct))
++		timeout = nf_ct_expires(ct) / HZ;
++	else
++		timeout = ct->timeout / HZ;
+
+ 	if (skip_zero && timeout == 0)
+ 		return 0;
+@@ -2258,11 +2263,6 @@ ctnetlink_create_conntrack(struct net *net,
+ 	if (!cda[CTA_TIMEOUT])
+ 		goto err1;
+
+-	timeout = (u64)ntohl(nla_get_be32(cda[CTA_TIMEOUT])) * HZ;
+-	if (timeout > INT_MAX)
+-		timeout = INT_MAX;
+-	ct->timeout = (u32)timeout + nfct_time_stamp;
+-
+ 	rcu_read_lock();
+  	if (cda[CTA_HELP]) {
+ 		char *helpname = NULL;
+@@ -2331,6 +2331,9 @@ ctnetlink_create_conntrack(struct net *net,
+ 	/* we must add conntrack extensions before confirmation. */
+ 	ct->status |= IPS_CONFIRMED;
+
++	timeout = (u64)ntohl(nla_get_be32(cda[CTA_TIMEOUT])) * HZ;
++	__nf_ct_set_timeout(ct, timeout);
++
+ 	if (cda[CTA_STATUS]) {
+ 		err = ctnetlink_change_status(ct, cda);
+ 		if (err < 0)
+--
+2.43.0
+

@@ -1,0 +1,53 @@
+From cc9230de6aa281eafc93860c29a671452debb071 Mon Sep 17 00:00:00 2001
+From: Shuhao Fu <sfual@cse.ust.hk>
+Date: Thu, 28 Aug 2025 02:24:19 +0800
+Subject: [PATCH 21/49] fs/smb: Fix inconsistent refcnt update
+
+A possible inconsistent update of refcount was identified in `smb2_compound_op`.
+Such inconsistent update could lead to possible resource leaks.
+
+Why it is a possible bug:
+1. In the comment section of the function, it clearly states that the
+reference to `cfile` should be dropped after calling this function.
+2. Every control flow path would check and drop the reference to
+`cfile`, except the patched one.
+3. Existing callers would not handle refcount update of `cfile` if
+-ENOMEM is returned.
+
+To fix the bug, an extra goto label "out" is added, to make sure that the
+cleanup logic would always be respected. As the problem is caused by the
+allocation failure of `vars`, the cleanup logic between label "finished"
+and "out" can be safely ignored. According to the definition of function
+`is_replayable_error`, the error code of "-ENOMEM" is not recoverable.
+Therefore, the replay logic also gets ignored.
+
+Signed-off-by: Shuhao Fu <sfual@cse.ust.hk>
+Acked-by: Paulo Alcantara (Red Hat) <pc@manguebit.org>
+Cc: stable@vger.kernel.org
+Signed-off-by: Steve French <stfrench@microsoft.com>
+---
+ fs/cifs/smb2inode.c | 8 ++++++--
+ 1 file changed, 6 insertions(+), 2 deletions(-)
+
+diff --git a/fs/cifs/smb2inode.c b/fs/cifs/smb2inode.c
+index 20e9d1bcd96b..26f058fb2f49 100644
+--- a/fs/cifs/smb2inode.c
++++ b/fs/cifs/smb2inode.c
+@@ -72,8 +72,12 @@ smb2_compound_op(const unsigned int xid, struct cifs_tcon *tcon,
+ 	int len;
+
+ 	vars = kzalloc(sizeof(*vars), GFP_ATOMIC);
+-	if (vars == NULL)
+-		return -ENOMEM;
++	if (vars == NULL) {
++		rc = -ENOMEM;
++		if (cfile)
++			cifsFileInfo_put(cfile);
++		return rc;
++	}
+ 	rqst = &vars->rqst[0];
+ 	rsp_iov = &vars->rsp_iov[0];
+
+--
+2.43.0
+

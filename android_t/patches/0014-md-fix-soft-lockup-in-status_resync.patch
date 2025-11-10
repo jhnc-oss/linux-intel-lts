@@ -1,0 +1,57 @@
+From 763fd18a99ab9e35bd573bede2410bc8eb0fdde9 Mon Sep 17 00:00:00 2001
+From: Yu Kuai <yukuai3@huawei.com>
+Date: Fri, 10 Mar 2023 15:38:51 +0800
+Subject: [PATCH 14/49] md: fix soft lockup in status_resync
+
+status_resync() will calculate 'curr_resync - recovery_active' to show
+user a progress bar like following:
+
+[============>........]  resync = 61.4%
+
+'curr_resync' and 'recovery_active' is updated in md_do_sync(), and
+status_resync() can read them concurrently, hence it's possible that
+'curr_resync - recovery_active' can overflow to a huge number. In this
+case status_resync() will be stuck in the loop to print a large amount
+of '=', which will end up soft lockup.
+
+Fix the problem by setting 'resync' to MD_RESYNC_ACTIVE in this case,
+this way resync in progress will be reported to user.
+
+Signed-off-by: Yu Kuai <yukuai3@huawei.com>
+Signed-off-by: Song Liu <song@kernel.org>
+Link: https://lore.kernel.org/r/20230310073855.1337560-3-yukuai1@huaweicloud.com
+---
+ drivers/md/md.c | 16 +++++++++++++---
+ 1 file changed, 13 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/md/md.c b/drivers/md/md.c
+index f0d03c7a97a9..fb023d22c06c 100644
+--- a/drivers/md/md.c
++++ b/drivers/md/md.c
+@@ -8102,10 +8102,20 @@ static int status_resync(struct seq_file *seq, struct mddev *mddev)
+ 		if (test_bit(MD_RECOVERY_DONE, &mddev->recovery))
+ 			/* Still cleaning up */
+ 			resync = max_sectors;
+-	} else if (resync > max_sectors)
++	} else if (resync > max_sectors) {
+ 		resync = max_sectors;
+-	else
+-		resync -= atomic_read(&mddev->recovery_active);
++	} else {
++		res = atomic_read(&mddev->recovery_active);
++		/*
++		 * Resync has started, but the subtraction has overflowed or
++		 * yielded one of the special values. Force it to active to
++		 * ensure the status reports an active resync.
++		 */
++		if (resync < res || resync - res < MD_RESYNC_ACTIVE)
++			resync = MD_RESYNC_ACTIVE;
++		else
++			resync -= res;
++	}
+
+ 	if (resync == MD_RESYNC_NONE) {
+ 		if (test_bit(MD_RESYNCING_REMOTE, &mddev->recovery)) {
+--
+2.43.0
+

@@ -1,0 +1,82 @@
+From 57c761baf18e6de403fac7adbcfa511dbc5337a1 Mon Sep 17 00:00:00 2001
+From: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Date: Wed, 5 Nov 2025 18:14:16 +0800
+Subject: [PATCH 16/49] futex: Prevent use-after-free during requeue-PI
+
+syzbot managed to trigger the following race:
+
+   T1                               T2
+
+ futex_wait_requeue_pi()
+   futex_do_wait()
+     schedule()
+                               futex_requeue()
+                                 futex_proxy_trylock_atomic()
+                                   futex_requeue_pi_prepare()
+                                   requeue_pi_wake_futex()
+                                     futex_requeue_pi_complete()
+                                      /* preempt */
+
+         * timeout/ signal wakes T1 *
+
+   futex_requeue_pi_wakeup_sync() // Q_REQUEUE_PI_LOCKED
+   futex_hash_put()
+  // back to userland, on stack futex_q is garbage
+
+                                      /* back */
+                                     wake_up_state(q->task, TASK_NORMAL);
+
+In this scenario futex_wait_requeue_pi() is able to leave without using
+futex_q::lock_ptr for synchronization.
+
+This can be prevented by reading futex_q::task before updating the
+futex_q::requeue_state. A reference on the task_struct is not needed
+because requeue_pi_wake_futex() is invoked with a spinlock_t held which
+implies a RCU read section.
+
+Even if T1 terminates immediately after, the task_struct will remain valid
+during T2's wake_up_state().  A READ_ONCE on futex_q::task before
+futex_requeue_pi_complete() is enough because it ensures that the variable
+is read before the state is updated.
+
+Read futex_q::task before updating the requeue state, use it for the
+following wakeup.
+
+Fixes: 07d91ef510fb1 ("futex: Prevent requeue_pi() lock nesting issue on RT")
+Reported-by: syzbot+034246a838a10d181e78@syzkaller.appspotmail.com
+Signed-off-by: Sebastian Andrzej Siewior <bigeasy@linutronix.de>
+Signed-off-by: Thomas Gleixner <tglx@linutronix.de>
+Closes: https://lore.kernel.org/all/68b75989.050a0220.3db4df.01dd.GAE@google.com/
+---
+ kernel/futex/core.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/kernel/futex/core.c b/kernel/futex/core.c
+index 364afb789e8d..a1756d39ef4e 100644
+--- a/kernel/futex/core.c
++++ b/kernel/futex/core.c
+@@ -2001,6 +2001,8 @@ static inline
+ void requeue_pi_wake_futex(struct futex_q *q, union futex_key *key,
+ 			   struct futex_hash_bucket *hb)
+ {
++       struct task_struct *task;
++
+ 	q->key = *key;
+
+ 	__unqueue_futex(q);
+@@ -2009,10 +2011,11 @@ void requeue_pi_wake_futex(struct futex_q *q, union futex_key *key,
+ 	q->rt_waiter = NULL;
+
+ 	q->lock_ptr = &hb->lock;
++       task = READ_ONCE(q->task);
+
+ 	/* Signal locked state to the waiter */
+ 	futex_requeue_pi_complete(q, 1);
+-	wake_up_state(q->task, TASK_NORMAL);
++	wake_up_state(task, TASK_NORMAL);
+ }
+
+ /**
+--
+2.43.0
+

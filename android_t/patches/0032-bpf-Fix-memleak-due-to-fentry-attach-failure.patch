@@ -1,0 +1,108 @@
+From 4a4dfc0867acdc0d4a4c8c97fe3db208cc411edd Mon Sep 17 00:00:00 2001
+From: Yafang Shao <laoar.shao@gmail.com>
+Date: Mon, 15 May 2023 13:08:47 +0000
+Subject: [PATCH 32/49] bpf: Fix memleak due to fentry attach failure
+
+If it fails to attach fentry, the allocated bpf trampoline image will be
+left in the system. That can be verified by checking /proc/kallsyms.
+
+This meamleak can be verified by a simple bpf program as follows:
+
+  SEC("fentry/trap_init")
+  int fentry_run()
+  {
+      return 0;
+  }
+
+It will fail to attach trap_init because this function is freed after
+kernel init, and then we can find the trampoline image is left in the
+system by checking /proc/kallsyms.
+
+  $ tail /proc/kallsyms
+  ffffffffc0613000 t bpf_trampoline_6442453466_1  [bpf]
+  ffffffffc06c3000 t bpf_trampoline_6442453466_1  [bpf]
+
+  $ bpftool btf dump file /sys/kernel/btf/vmlinux | grep "FUNC 'trap_init'"
+  [2522] FUNC 'trap_init' type_id=119 linkage=static
+
+  $ echo $((6442453466 & 0x7fffffff))
+  2522
+
+Note that there are two left bpf trampoline images, that is because the
+libbpf will fallback to raw tracepoint if -EINVAL is returned.
+
+Fixes: e21aa341785c ("bpf: Fix fexit trampoline.")
+Signed-off-by: Yafang Shao <laoar.shao@gmail.com>
+Signed-off-by: Daniel Borkmann <daniel@iogearbox.net>
+Acked-by: Song Liu <song@kernel.org>
+Cc: Jiri Olsa <olsajiri@gmail.com>
+Link: https://lore.kernel.org/bpf/20230515130849.57502-2-laoar.shao@gmail.com
+---
+ kernel/bpf/trampoline.c | 22 ++++++++++++++++------
+ 1 file changed, 16 insertions(+), 6 deletions(-)
+
+diff --git a/kernel/bpf/trampoline.c b/kernel/bpf/trampoline.c
+index 1bffee045886..272ed76c7339 100644
+--- a/kernel/bpf/trampoline.c
++++ b/kernel/bpf/trampoline.c
+@@ -185,11 +185,8 @@ bpf_trampoline_get_progs(const struct bpf_trampoline *tr, int *total, bool *ip_a
+ 	return tprogs;
+ }
+
+-static void __bpf_tramp_image_put_deferred(struct work_struct *work)
++static void bpf_tramp_image_free(struct bpf_tramp_image *im)
+ {
+-	struct bpf_tramp_image *im;
+-
+-	im = container_of(work, struct bpf_tramp_image, work);
+ 	bpf_image_ksym_del(&im->ksym);
+ 	bpf_jit_free_exec(im->image);
+ 	bpf_jit_uncharge_modmem(1);
+@@ -197,6 +194,14 @@ static void __bpf_tramp_image_put_deferred(struct work_struct *work)
+ 	kfree_rcu(im, rcu);
+ }
+
++static void __bpf_tramp_image_put_deferred(struct work_struct *work)
++{
++	struct bpf_tramp_image *im;
++
++	im = container_of(work, struct bpf_tramp_image, work);
++	bpf_tramp_image_free(im);
++}
++
+ /* callback, fexit step 3 or fentry step 2 */
+ static void __bpf_tramp_image_put_rcu(struct rcu_head *rcu)
+ {
+@@ -355,7 +360,7 @@ static int bpf_trampoline_update(struct bpf_trampoline *tr)
+ 					  &tr->func.model, flags, tprogs,
+ 					  tr->func.addr);
+ 	if (err < 0)
+-		goto out;
++		goto out_free;
+
+ 	WARN_ON(tr->cur_image && tr->selector == 0);
+ 	WARN_ON(!tr->cur_image && tr->selector);
+@@ -366,7 +371,8 @@ static int bpf_trampoline_update(struct bpf_trampoline *tr)
+ 		/* first time registering */
+ 		err = register_fentry(tr, im->image);
+ 	if (err)
+-		goto out;
++		goto out_free;
++
+ 	if (tr->cur_image)
+ 		bpf_tramp_image_put(tr->cur_image);
+ 	tr->cur_image = im;
+@@ -374,6 +380,10 @@ static int bpf_trampoline_update(struct bpf_trampoline *tr)
+ out:
+ 	kfree(tprogs);
+ 	return err;
++
++out_free:
++	bpf_tramp_image_free(im);
++	goto out;
+ }
+
+ static enum bpf_tramp_prog_type bpf_attach_type_to_tramp(struct bpf_prog *prog)
+--
+2.43.0
+
