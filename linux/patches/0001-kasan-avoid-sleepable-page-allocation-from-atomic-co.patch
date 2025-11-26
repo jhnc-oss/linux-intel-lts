@@ -131,7 +131,7 @@ index 88d1c9dcb507..d2c70cd2afb1 100644
 +	struct page **page_array = pages;
 +
 +	while (nr_pages) {
-+		nr_populated = alloc_pages_bulk(GFP_KERNEL, nr_pages, pages);
++		nr_populated = alloc_pages_bulk_array(GFP_KERNEL, nr_pages, pages);
 +		if (!nr_populated) {
 +			___free_pages_bulk(page_array, nr_total - nr_pages);
 +			return -ENOMEM;

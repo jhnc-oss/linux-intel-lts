@@ -160,4 +160,36 @@
 #CVE-2025-40074
 0007-ipv4-start-using-dst_dev_rcu.patch
 
+#CVE-2025-40130
+0001-scsi-ufs-core-Fix-data-race-in-CPU-latency-PM-QoS-re.patch
+
+#CVE-2025-40135
+0002-ipv6-use-RCU-in-ip6_xmit.patch
+
+#CVE-2025-40136
+0003-crypto-hisilicon-qm-request-reserved-interrupt-for-v.patch
+
+#CVE-2025-40168
+0004-smc-Use-__sk_dst_get-and-dst_dev_rcu-in-in-smc_clc_p.patch
+
+#CVE-2025-40147
+0005-blk-throttle-fix-access-race-during-throttle-policy-.patch
+
+#CVE-2025-40158
+0006-ipv6-use-RCU-in-ip6_output.patch
+
+#CVE-2025-40164
+0007-usbnet-Fix-using-smp_processor_id-in-preemptible-cod.patch
+
+#CVE-2025-40139
+0008-smc-Use-__sk_dst_get-and-dst_dev_rcu-in-smc_clc_prfx.patch
+
+#CVE-2025-40150
+0009-f2fs-fix-to-avoid-migrating-empty-section.patch
+
+#CVE-2025-40149
+0010-tls-Use-__sk_dst_get-and-dst_dev_rcu-in-get_netdev_f.patch
+
+#CVE-2025-40170
+0011-net-use-dst_dev_rcu-in-sk_setup_caps.patch
 
