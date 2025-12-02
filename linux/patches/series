@@ -35,10 +35,6 @@
 #CVE-2025-22127
 0012-f2fs-fix-potential-deadloop-in-prepare_compress_over.patch
 
-#CVE-2025-22121
-0018-ext4-introduce-ITAIL-helper.patch
-0019-ext4-fix-out-of-bound-read-in-ext4_xattr_inode_dec_r.patch
-
 #CVE-2025-22104
 0020-ibmvnic-Use-kernel-helpers-for-hex-dumps.patch
 
@@ -68,12 +64,6 @@
 
 #CVE-2025-22108
 0035-bnxt_en-Mask-the-bd_cnt-field-in-the-TX-BD-properly.patch
-
-#CVE-2025-22107
-0036-net-dsa-sja1105-fix-kasan-out-of-bounds-warning-in-s.patch
-
-#CVE-2025-23129
-0040-wifi-ath11k-Clear-affinity-hint-before-calling-ath11.patch
 
 #CVE-2025-37746
 0001-perf-dwc_pcie-Qualify-RAS-DES-VSEC-Capability-by-Ven.patch
@@ -156,12 +146,6 @@
 #CVE-2025-39933
 0003-smb-client-let-recv_done-verify-data_offset-data_len.patch
 
-#CVE-2025-39981
-0001-Bluetooth-MGMT-Fix-possible-UAFs.patch
-
-#CVE-2025-40077
-0001-f2fs-fix-to-avoid-overflow-while-left-shift-operatio.patch
-
 #CVE-2025-40086
 0002-drm-xe-Avoid-evicting-object-of-the-same-vm-in-none-.patch
 0003-drm-xe-Don-t-allow-evicting-of-BOs-in-same-VM-in-arr.patch
@@ -176,4 +160,36 @@
 #CVE-2025-40074
 0007-ipv4-start-using-dst_dev_rcu.patch
 
+#CVE-2025-40130
+0001-scsi-ufs-core-Fix-data-race-in-CPU-latency-PM-QoS-re.patch
+
+#CVE-2025-40135
+0002-ipv6-use-RCU-in-ip6_xmit.patch
+
+#CVE-2025-40136
+0003-crypto-hisilicon-qm-request-reserved-interrupt-for-v.patch
+
+#CVE-2025-40168
+0004-smc-Use-__sk_dst_get-and-dst_dev_rcu-in-in-smc_clc_p.patch
+
+#CVE-2025-40147
+0005-blk-throttle-fix-access-race-during-throttle-policy-.patch
+
+#CVE-2025-40158
+0006-ipv6-use-RCU-in-ip6_output.patch
+
+#CVE-2025-40164
+0007-usbnet-Fix-using-smp_processor_id-in-preemptible-cod.patch
+
+#CVE-2025-40139
+0008-smc-Use-__sk_dst_get-and-dst_dev_rcu-in-smc_clc_prfx.patch
+
+#CVE-2025-40150
+0009-f2fs-fix-to-avoid-migrating-empty-section.patch
+
+#CVE-2025-40149
+0010-tls-Use-__sk_dst_get-and-dst_dev_rcu-in-get_netdev_f.patch
+
+#CVE-2025-40170
+0011-net-use-dst_dev_rcu-in-sk_setup_caps.patch
 
