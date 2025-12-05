@@ -7993,6 +7993,8 @@ void vmx_handle_exit_irqoff(struct kvm_vcpu *vcpu)
 	else if (vmx_get_exit_reason(vcpu).basic == EXIT_REASON_EXTERNAL_INTERRUPT)
 		handle_external_interrupt_irqoff(vcpu, vmx_get_intr_info(vcpu));
 #endif
+	else if (vmx_get_exit_reason(vcpu).basic == EXIT_REASON_MCE_DURING_VMENTRY)
+		kvm_machine_check();
 }
 
 #ifndef __PKVM_HYP__
