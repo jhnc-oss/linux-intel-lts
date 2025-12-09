@@ -209,7 +209,9 @@ struct ipu_isys_subdev_info {
 };
 
 struct ipu_isys_clk_mapping {
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
 	struct clk_lookup clkdev_data;
+#endif
 	char *platform_clock_name;
 };
 
