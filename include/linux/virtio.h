@@ -105,6 +105,9 @@ int virtqueue_resize(struct virtqueue *vq, u32 num,
 int virtqueue_reset(struct virtqueue *vq,
 		    void (*recycle)(struct virtqueue *vq, void *buf),
 		    void (*recycle_done)(struct virtqueue *vq));
+#ifdef CONFIG_VIRTIO_PMD
+void virtio_poll_virtqueues(struct virtio_device *dev);
+#endif
 
 struct virtio_admin_cmd {
 	__le16 opcode;
@@ -155,6 +158,10 @@ struct virtio_device {
 	struct dentry *debugfs_dir;
 	u64 debugfs_filter_features;
 #endif
+#ifdef CONFIG_VIRTIO_PMD
+	spinlock_t vq_lock;
+	struct hrtimer hr_timer;
+#endif
 };
 
 #define dev_to_virtio(_dev)	container_of_const(_dev, struct virtio_device, dev)
@@ -204,6 +211,8 @@ size_t virtio_max_dma_size(const struct virtio_device *vdev);
  *    changes; may be called in interrupt context.
  * @freeze: optional function to call during suspend/hibernation.
  * @restore: optional function to call on resume.
+ * @shutdown: synchronize with the device on shutdown. If provided, replaces
+ *    the virtio core implementation.
  */
 struct virtio_driver {
 	struct device_driver driver;
@@ -212,6 +221,9 @@ struct virtio_driver {
 	unsigned int feature_table_size;
 	const unsigned int *feature_table_legacy;
 	unsigned int feature_table_size_legacy;
+#ifdef CONFIG_VIRTIO_PMD
+	bool polling_mode;
+#endif
 	int (*validate)(struct virtio_device *dev);
 	int (*probe)(struct virtio_device *dev);
 	void (*scan)(struct virtio_device *dev);
@@ -219,6 +231,7 @@ struct virtio_driver {
 	void (*config_changed)(struct virtio_device *dev);
 	int (*freeze)(struct virtio_device *dev);
 	int (*restore)(struct virtio_device *dev);
+	void (*shutdown)(struct virtio_device *dev);
 };
 
 #define drv_to_virtio(__drv)	container_of_const(__drv, struct virtio_driver, driver)
@@ -227,6 +240,17 @@ struct virtio_driver {
 #define register_virtio_driver(drv) \
 	__register_virtio_driver(drv, THIS_MODULE)
 int __register_virtio_driver(struct virtio_driver *drv, struct module *owner);
+
+#ifdef CONFIG_VIRTIO_PMD
+void virtio_start_polling_timer(struct virtio_device *dev);
+void virtio_stop_polling_timer(struct virtio_device *dev);
+static inline bool virtio_polling_mode_enabled(struct virtio_device *dev)
+{
+	struct virtio_driver *drv = drv_to_virtio(dev->dev.driver);
+
+	return drv->polling_mode;
+}
+#endif
 void unregister_virtio_driver(struct virtio_driver *drv);
 
 /* module_virtio_driver() - Helper macro for drivers that don't do

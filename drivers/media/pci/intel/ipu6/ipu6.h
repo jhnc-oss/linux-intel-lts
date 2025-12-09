@@ -80,12 +80,16 @@ struct ipu6_device {
 	const struct firmware *cpd_fw;
 	const char *cpd_fw_name;
 	u32 cpd_metadata_cmpnt_size;
-
 	void __iomem *base;
+#ifdef CONFIG_DEBUG_FS
+	struct dentry *ipu_dir;
+#endif
 	bool need_ipc_reset;
 	bool secure_mode;
 	u8 hw_ver;
 	bool bus_ready_to_probe;
+
+	struct ipu_trace *trace;
 };
 
 #define IPU6_ISYS_NAME "isys"
@@ -323,6 +327,9 @@ struct ipu6_isys_internal_pdata {
 struct ipu6_isys_pdata {
 	void __iomem *base;
 	const struct ipu6_isys_internal_pdata *ipdata;
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+	struct ipu_isys_subdev_pdata *spdata;
+#endif
 };
 
 struct ipu6_psys_internal_pdata {

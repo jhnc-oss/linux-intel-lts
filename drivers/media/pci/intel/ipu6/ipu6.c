@@ -32,6 +32,20 @@
 #include "ipu6-platform-buttress-regs.h"
 #include "ipu6-platform-isys-csi2-reg.h"
 #include "ipu6-platform-regs.h"
+#include "ipu6-trace.h"
+
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+#include <media/ipu-acpi.h>
+#endif
+
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+static int isys_init_acpi_add_device(struct device *dev, void *priv,
+				     struct ipu6_isys_csi2_config *csi2,
+				     bool reprobe)
+{
+       return 0;
+}
+#endif
 
 static unsigned int isys_freq_override;
 module_param(isys_freq_override, uint, 0660);
@@ -375,11 +389,18 @@ static void ipu6_internal_pdata_init(struct ipu6_device *isp)
 static struct ipu6_bus_device *
 ipu6_isys_init(struct pci_dev *pdev, struct device *parent,
 	       struct ipu6_buttress_ctrl *ctrl, void __iomem *base,
-	       const struct ipu6_isys_internal_pdata *ipdata)
+	       const struct ipu6_isys_internal_pdata *ipdata,
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+	       struct ipu_isys_subdev_pdata *spdata
+#endif
+			)
 {
 	struct device *dev = &pdev->dev;
 	struct ipu6_bus_device *isys_adev;
 	struct ipu6_isys_pdata *pdata;
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+	struct ipu_isys_subdev_pdata *acpi_pdata;
+#endif
 	int ret;
 
 	ret = ipu_bridge_init(dev, ipu_bridge_parse_ssdb);
@@ -394,7 +415,9 @@ ipu6_isys_init(struct pci_dev *pdev, struct device *parent,
 
 	pdata->base = base;
 	pdata->ipdata = ipdata;
-
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+	pdata->spdata = spdata;
+#endif
 	/* Override the isys freq */
 	if (isys_freq_override >= BUTTRESS_MIN_FORCE_IS_FREQ &&
 	    isys_freq_override <= BUTTRESS_MAX_FORCE_IS_FREQ) {
@@ -411,6 +434,22 @@ ipu6_isys_init(struct pci_dev *pdev, struct device *parent,
 				"ipu6_bus_initialize_device isys failed\n");
 	}
 
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+	if (!spdata) {
+		dev_dbg(&pdev->dev, "No subdevice info provided");
+		ret = ipu_get_acpi_devices(isys_adev, &isys_adev->auxdev.dev, &acpi_pdata, NULL,
+				     isys_init_acpi_add_device);
+		if (acpi_pdata && (*acpi_pdata->subdevs)) {
+			pdata->spdata = acpi_pdata;
+		}
+	} else {
+		dev_dbg(&pdev->dev, "Subdevice info found");
+		ret = ipu_get_acpi_devices(isys_adev, &isys_adev->auxdev.dev, &acpi_pdata, &spdata,
+				     isys_init_acpi_add_device);
+	}
+	if (ret)
+		return ERR_PTR(ret);
+#endif
 	isys_adev->mmu = ipu6_mmu_init(dev, base, ISYS_MMID,
 				       &ipdata->hw_variant);
 	if (IS_ERR(isys_adev->mmu)) {
@@ -488,11 +527,6 @@ static int ipu6_pci_config_setup(struct pci_dev *dev, u8 hw_ver)
 {
 	int ret;
 
-	/* disable IPU6 PCI ATS on mtl ES2 */
-	if (is_ipu6ep_mtl(hw_ver) && boot_cpu_data.x86_stepping == 0x2 &&
-	    pci_ats_supported(dev))
-		pci_disable_ats(dev);
-
 	/* No PCI msi capability for IPU6EP */
 	if (is_ipu6ep(hw_ver) || is_ipu6ep_mtl(hw_ver)) {
 		/* likely do nothing as msi not enabled by default */
@@ -506,6 +540,37 @@ static int ipu6_pci_config_setup(struct pci_dev *dev, u8 hw_ver)
 
 	return 0;
 }
+
+#ifdef CONFIG_DEBUG_FS
+static int ipu_init_debugfs(struct ipu6_device *isp)
+{
+	struct dentry *dir;
+
+	dir = debugfs_create_dir(IPU6_NAME, NULL);
+	if (!dir)
+		return -ENOMEM;
+
+	if (ipu_trace_debugfs_add(isp, dir))
+		goto err;
+
+	isp->ipu_dir = dir;
+
+	return 0;
+err:
+	debugfs_remove_recursive(dir);
+	return -ENOMEM;
+}
+
+static void ipu_remove_debugfs(struct ipu6_device *isp)
+{
+	/*
+	 * Since isys and psys debugfs dir will be created under ipu root dir,
+	 * mark its dentry to NULL to avoid duplicate removal.
+	 */
+	debugfs_remove_recursive(isp->ipu_dir);
+	isp->ipu_dir = NULL;
+}
+#endif /* CONFIG_DEBUG_FS */
 
 static void ipu6_configure_vc_mechanism(struct ipu6_device *isp)
 {
@@ -615,6 +680,10 @@ static int ipu6_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		goto buttress_exit;
 	}
 
+	ret = ipu_trace_add(isp);
+	if (ret)
+		dev_err(&isp->pdev->dev, "Trace support not available\n");
+
 	ret = ipu6_cpd_validate_cpd_file(isp, isp->cpd_fw->data,
 					 isp->cpd_fw->size);
 	if (ret) {
@@ -631,7 +700,11 @@ static int ipu6_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	}
 
 	isp->isys = ipu6_isys_init(pdev, dev, isys_ctrl, isys_base,
-				   &isys_ipdata);
+				   &isys_ipdata,
+#if IS_ENABLED(CONFIG_INTEL_IPU6_ACPI)
+				  pdev->dev.platform_data
+#endif
+					);
 	if (IS_ERR(isp->isys)) {
 		ret = PTR_ERR(isp->isys);
 		goto out_ipu6_bus_del_devices;
@@ -694,6 +767,13 @@ static int ipu6_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	ipu6_mmu_hw_cleanup(isp->psys->mmu);
 	pm_runtime_put(&isp->psys->auxdev.dev);
 
+#ifdef CONFIG_DEBUG_FS
+	ret = ipu_init_debugfs(isp);
+	if (ret)
+		dev_err(&isp->pdev->dev, "Failed to initialize debugfs");
+
+#endif
+
 	/* Configure the arbitration mechanisms for VC requests */
 	ipu6_configure_vc_mechanism(isp);
 
@@ -734,6 +814,11 @@ static void ipu6_pci_remove(struct pci_dev *pdev)
 	struct ipu6_device *isp = pci_get_drvdata(pdev);
 	struct ipu6_mmu *isys_mmu = isp->isys->mmu;
 	struct ipu6_mmu *psys_mmu = isp->psys->mmu;
+
+#ifdef CONFIG_DEBUG_FS
+	ipu_remove_debugfs(isp);
+#endif
+	ipu_trace_release(isp);
 
 	devm_free_irq(&pdev->dev, pdev->irq, isp);
 	ipu6_cpd_free_pkg_dir(isp->psys);

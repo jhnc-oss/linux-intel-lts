@@ -2463,7 +2463,7 @@ static int of_spi_parse_dt(struct spi_controller *ctlr, struct spi_device *spi,
 	if (rc > ctlr->num_chipselect) {
 		dev_err(&ctlr->dev, "%pOF has number of CS > ctlr->num_chipselect (%d)\n",
 			nc, rc);
-		return rc;
+		return -EINVAL;
 	}
 	if ((of_property_read_bool(nc, "parallel-memories")) &&
 	    (!(ctlr->flags & SPI_CONTROLLER_MULTI_CS))) {
@@ -3508,6 +3508,41 @@ static inline void __spi_mark_suspended(struct spi_controller *ctlr)
 	mutex_unlock(&ctlr->bus_lock_mutex);
 }
 
+static int __spi_controller_match(struct device *dev, const void *data)
+{
+	struct spi_controller *ctlr;
+	const u16 *bus_num = data;
+
+	ctlr = container_of(dev, struct spi_controller, dev);
+	return ctlr->bus_num == *bus_num;
+}
+
+/**
+ * spi_busnum_to_master - look up master associated with bus_num
+ * @bus_num: the master's bus number
+ * Context: can sleep
+ *
+ * This call may be used with devices that are registered after
+ * arch init time.  It returns a refcounted pointer to the relevant
+ * spi_controller (which the caller must release), or NULL if there is
+ * no such master registered.
+ *
+ * Return: the SPI master structure on success, else NULL.
+ */
+struct spi_controller *spi_busnum_to_master(u16 bus_num)
+{
+	struct device		*dev;
+	struct spi_controller	*ctlr = NULL;
+
+	dev = class_find_device(&spi_master_class, NULL, &bus_num,
+				__spi_controller_match);
+	if (dev)
+		ctlr = container_of(dev, struct spi_controller, dev);
+	/* reference got in class_find_device */
+	return ctlr;
+}
+EXPORT_SYMBOL_GPL(spi_busnum_to_master);
+
 static inline void __spi_mark_resumed(struct spi_controller *ctlr)
 {
 	mutex_lock(&ctlr->bus_lock_mutex);
@@ -4145,10 +4180,13 @@ static int __spi_validate(struct spi_device *spi, struct spi_message *message)
 				xfer->tx_nbits != SPI_NBITS_OCTAL)
 				return -EINVAL;
 			if ((xfer->tx_nbits == SPI_NBITS_DUAL) &&
-				!(spi->mode & (SPI_TX_DUAL | SPI_TX_QUAD)))
+				!(spi->mode & (SPI_TX_DUAL | SPI_TX_QUAD | SPI_TX_OCTAL)))
 				return -EINVAL;
 			if ((xfer->tx_nbits == SPI_NBITS_QUAD) &&
-				!(spi->mode & SPI_TX_QUAD))
+				!(spi->mode & (SPI_TX_QUAD | SPI_TX_OCTAL)))
+				return -EINVAL;
+			if ((xfer->tx_nbits == SPI_NBITS_OCTAL) &&
+				!(spi->mode & SPI_TX_OCTAL))
 				return -EINVAL;
 		}
 		/* Check transfer rx_nbits */
@@ -4161,10 +4199,13 @@ static int __spi_validate(struct spi_device *spi, struct spi_message *message)
 				xfer->rx_nbits != SPI_NBITS_OCTAL)
 				return -EINVAL;
 			if ((xfer->rx_nbits == SPI_NBITS_DUAL) &&
-				!(spi->mode & (SPI_RX_DUAL | SPI_RX_QUAD)))
+				!(spi->mode & (SPI_RX_DUAL | SPI_RX_QUAD | SPI_RX_OCTAL)))
 				return -EINVAL;
 			if ((xfer->rx_nbits == SPI_NBITS_QUAD) &&
-				!(spi->mode & SPI_RX_QUAD))
+				!(spi->mode & (SPI_RX_QUAD | SPI_RX_OCTAL)))
+				return -EINVAL;
+			if ((xfer->rx_nbits == SPI_NBITS_OCTAL) &&
+				!(spi->mode & SPI_RX_OCTAL))
 				return -EINVAL;
 		}
 
