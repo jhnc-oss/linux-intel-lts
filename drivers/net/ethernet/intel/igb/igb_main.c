@@ -3473,7 +3473,7 @@ static const struct net_device_ops igb_netdev_ops = {
 	.ndo_enable_oob		= igb_enable_oob,
 	.ndo_disable_oob	= igb_disable_oob,
 #endif
-	.ndo_xsk_wakeup         = igb_xsk_wakeup,
+	.ndo_xsk_wakeup         = igb_xsk_wakeup
 };
 
 /**
@@ -5463,6 +5463,7 @@ void igb_free_rx_resources(struct igb_ring *rx_ring)
 		rx_ring->rx_buffer_info = NULL;
 	}
 	igb_free_inband_wheel(rx_ring);
+
 	/* if not set, then don't free */
 	if (!rx_ring->desc)
 		return;

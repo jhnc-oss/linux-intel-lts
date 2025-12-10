@@ -862,6 +862,11 @@ static inline struct netdev_queue *txring_txq(const struct igb_ring *tx_ring)
 	return netdev_get_tx_queue(tx_ring->netdev, tx_ring->queue_index);
 }
 
+static inline bool igb_xdp_is_enabled(struct igb_adapter *adapter)
+{
+	return !!adapter->xdp_prog;
+}
+
 /*
  * Check whether oob support is compiled in for the IGB driver. This
  * tells nothing about the current execution stage, or whether oob
@@ -880,11 +885,6 @@ static inline bool igb_net_oob(void)
 static inline bool igb_running_oob(void)
 {
 	return igb_net_oob() && running_oob();
-}
-
-static inline bool igb_xdp_is_enabled(struct igb_adapter *adapter)
-{
-	return !!adapter->xdp_prog;
 }
 
 int igb_add_filter(struct igb_adapter *adapter,

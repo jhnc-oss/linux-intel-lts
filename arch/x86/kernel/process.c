@@ -927,6 +927,7 @@ static __cpuidle void mwait_idle(void)
 			goto out;
 
 		__sti_mwait(0, 0);
+		hard_cond_local_irq_disable();
 		raw_local_irq_disable();
 	}
 

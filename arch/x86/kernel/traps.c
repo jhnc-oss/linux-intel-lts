@@ -361,6 +361,7 @@ static noinstr bool handle_bug(struct pt_regs *regs)
 		else
 			local_irq_enable_full();
 	}
+
 	switch (ud_type) {
 	case BUG_UD2:
 		if (report_bug(regs->ip, regs) == BUG_TRAP_TYPE_WARN ||
@@ -381,12 +382,14 @@ static noinstr bool handle_bug(struct pt_regs *regs)
 	default:
 		break;
 	}
+
 	if (regs->flags & X86_EFLAGS_IF) {
 		if (running_oob())
 			hard_local_irq_disable();
 		else
 			local_irq_disable_full();
 	}
+
 	instrumentation_end();
 
 	return handled;

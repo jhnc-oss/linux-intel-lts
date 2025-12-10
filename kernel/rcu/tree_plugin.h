@@ -853,7 +853,7 @@ void rcu_read_unlock_strict(void)
 {
 	struct rcu_data *rdp;
 
-	if (on_pipeline_entry() || running_oob() || irqs_disabled() || preempt_count() || !rcu_state.gp_kthread)
+	if (on_pipeline_entry() || running_oob() || irqs_disabled() || in_atomic_preempt_off() || !rcu_state.gp_kthread)
 		return;
 
 	/*
