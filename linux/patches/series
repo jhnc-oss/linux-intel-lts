@@ -193,3 +193,16 @@
 #CVE-2025-40170
 0011-net-use-dst_dev_rcu-in-sk_setup_caps.patch
 
+#CVE-2025-40215
+0001-xfrm-delete-x-tunnel-as-we-delete-x.patch
+
+#CVE-2025-38656
+0002-wifi-iwlwifi-return-ERR_PTR-from-opmode-start.patch
+0003-wifi-iwlwifi-Fix-error-code-in-iwl_op_mode_dvm_start.patch
+
+#CVE-2025-38591
+0004-bpf-Reject-narrower-access-to-pointer-ctx-fields.patch
+
+#CVE-2025-38584
+0005-padata-Fix-pd-UAF-once-and-for-all.patch
+
