@@ -38,11 +38,6 @@
 #include <drm/drm_drv.h>
 #include <drm/drm_managed.h>
 
-#include <linux/android_kabi.h>
-ANDROID_KABI_DECLONLY(dma_buf);
-ANDROID_KABI_DECLONLY(dma_buf_attachment);
-ANDROID_KABI_DECLONLY(sg_table);
-
 static vm_fault_t ttm_bo_vm_fault_idle(struct ttm_buffer_object *bo,
 				struct vm_fault *vmf)
 {
@@ -426,6 +421,11 @@ int ttm_bo_vm_access(struct vm_area_struct *vma, unsigned long addr,
 	if (ret)
 		return ret;
 
+	if (!bo->resource) {
+		ret = -ENODATA;
+		goto unlock;
+	}
+
 	switch (bo->resource->mem_type) {
 	case TTM_PL_SYSTEM:
 		fallthrough;
@@ -440,6 +440,7 @@ int ttm_bo_vm_access(struct vm_area_struct *vma, unsigned long addr,
 			ret = -EIO;
 	}
 
+unlock:
 	ttm_bo_unreserve(bo);
 
 	return ret;

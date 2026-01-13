@@ -203,9 +203,11 @@ filegroup(
         "gki/aarch64/symbols/pixel",
         "gki/aarch64/symbols/pixel_watch",
         "gki/aarch64/symbols/qcom",
+        "gki/aarch64/symbols/rockchip",
         "gki/aarch64/symbols/rtkstb",
         "gki/aarch64/symbols/rtktv",
         "gki/aarch64/symbols/tcl",
+        "gki/aarch64/symbols/telechips",
         "gki/aarch64/symbols/transsion",
         "gki/aarch64/symbols/trusty",
         "gki/aarch64/symbols/tuxera",
@@ -214,6 +216,7 @@ filegroup(
         "gki/aarch64/symbols/virtual_device",
         "gki/aarch64/symbols/vivo",
         "gki/aarch64/symbols/xiaomi",
+        "gki/aarch64/symbols/zte",
     ],
     visibility = ["//visibility:public"],
 )
@@ -249,6 +252,7 @@ common_kernel(
     additional_kmi_symbol_lists = [":aarch64_additional_kmi_symbol_lists"],
     arch = "arm64",
     build_gki_artifacts = True,
+    clang_autofdo_profile = ":gki/aarch64/afdo/kernel.afdo",
     ddk_headers_archive = ":kernel_aarch64_ddk_headers_archive",
     ddk_module_headers = [":all_headers_aarch64"],
     defconfig = "arch/arm64/configs/gki_defconfig",
@@ -321,7 +325,9 @@ common_kernel(
     kmi_symbol_list_strict_mode = False,
     make_goals = _GKI_AARCH64_MAKE_GOALS,
     makefile = ":Makefile",
-    module_implicit_outs = get_gki_modules_list("arm64") + get_kunit_modules_list("arm64"),
+    module_implicit_outs = get_gki_modules_list("arm64") + get_kunit_modules_list("arm64") + [
+        "fs/xfs/xfs.ko",
+    ],
     pre_defconfig_fragments = ["arch/arm64/configs/tv_gki.fragment"],
     protected_module_names_list = ":gki_aarch64_protected_module_names",
     system_dlkm_extra_archive_files = [":generate_gki_module_info_arm64"],
@@ -339,12 +345,11 @@ Consider building @//common:kernel_aarch64 with:
 )
 
 common_kernel(
-    name = "kernel_aarch64_autofdo",
+    name = "kernel_aarch64_noautofdo",
     outs = DEFAULT_GKI_OUTS,
     additional_kmi_symbol_lists = [":aarch64_additional_kmi_symbol_lists"],
     arch = "arm64",
     build_gki_artifacts = True,
-    clang_autofdo_profile = ":gki/aarch64/afdo/kernel.afdo",
     ddk_headers_archive = ":kernel_aarch64_ddk_headers_archive",
     ddk_module_headers = [":all_headers_aarch64"],
     defconfig = "arch/arm64/configs/gki_defconfig",
@@ -355,7 +360,7 @@ common_kernel(
     gki_boot_img_sizes = _GKI_AARCH64_BOOT_IMAGE_SIZES,
     gki_system_dlkm_modules = ":gki_system_dlkm_modules_arm64",
     kcflags = COMMON_KCFLAGS,
-    # We don't guarantee ABI stability for AutoFDO target
+    # We don't guarantee ABI stability for no AutoFDO target
     kmi_enforced = False,
     kmi_symbol_list = "gki/aarch64/symbols/base",
     kmi_symbol_list_strict_mode = True,

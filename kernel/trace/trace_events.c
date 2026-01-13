@@ -689,6 +689,8 @@ int trace_event_reg(struct trace_event_call *call,
 
 #ifdef CONFIG_PERF_EVENTS
 	case TRACE_REG_PERF_REGISTER:
+		if (!call->class->perf_probe)
+			return -ENODEV;
 		return tracepoint_probe_register(call->tp,
 						 call->class->perf_probe,
 						 call);
@@ -2804,7 +2806,7 @@ event_create_dir(struct eventfs_inode *parent, struct trace_event_file *file)
 	return 0;
 }
 
-static void remove_event_from_tracers(struct trace_event_call *call)
+void remove_event_from_tracers(struct trace_event_call *call)
 {
 	struct trace_event_file *file;
 	struct trace_array *tr;

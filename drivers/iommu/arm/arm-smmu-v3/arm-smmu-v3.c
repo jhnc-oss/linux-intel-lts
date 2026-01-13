@@ -1241,7 +1241,7 @@ static int arm_smmu_alloc_cd_tables(struct arm_smmu_master *master)
 		cd_table->l2.l1tab = dma_alloc_coherent(smmu->dev, l1size,
 							&cd_table->cdtab_dma,
 							GFP_KERNEL);
-		if (!cd_table->l2.l2ptrs) {
+		if (!cd_table->l2.l1tab) {
 			ret = -ENOMEM;
 			goto err_free_l2ptrs;
 		}
@@ -2048,7 +2048,8 @@ static void arm_smmu_tlb_inv_page_nosync(struct iommu_iotlb_gather *gather,
 	struct arm_smmu_domain *smmu_domain = cookie;
 	struct iommu_domain *domain = &smmu_domain->domain;
 
-	iommu_iotlb_gather_add_page(domain, gather, iova, granule);
+	if (gather)
+		iommu_iotlb_gather_add_page(domain, gather, iova, granule);
 }
 
 static void arm_smmu_tlb_inv_walk(unsigned long iova, size_t size,

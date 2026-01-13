@@ -1234,7 +1234,7 @@ impl Thread {
         transaction: &DArc<Transaction>,
     ) -> bool {
         if let Ok(transaction) = &reply {
-            crate::trace::trace_transaction(true, &transaction);
+            crate::trace::trace_transaction(true, &transaction, Some(&self.task));
 
             transaction.set_outstanding(&mut self.process.inner.lock());
         }
@@ -1443,13 +1443,13 @@ impl Thread {
                 }
                 BC_FREE_BUFFER => {
                     let buffer = self.process.buffer_get(reader.read()?);
-                    if let Some(buffer) = &buffer {
+                    if let Some(buffer) = buffer {
                         if buffer.looper_need_return_on_free() {
                             self.inner.lock().looper_need_return = true;
                         }
                         crate::trace::trace_transaction_buffer_release(buffer.debug_id);
+                        drop(buffer);
                     }
-                    drop(buffer);
                 }
                 BC_INCREFS => {
                     self.process
