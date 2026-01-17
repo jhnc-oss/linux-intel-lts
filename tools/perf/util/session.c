@@ -17,6 +17,7 @@
 #include "map_symbol.h"
 #include "branch.h"
 #include "debug.h"
+#include "dwarf-regs.h"
 #include "env.h"
 #include "evlist.h"
 #include "evsel.h"
@@ -915,7 +916,7 @@ static void branch_stack__printf(struct perf_sample *sample,
 	}
 }
 
-static void regs_dump__printf(u64 mask, u64 *regs, const char *arch)
+static void regs_dump__printf(u64 mask, u64 *regs, uint16_t e_machine)
 {
 	unsigned rid, i = 0;
 
@@ -923,7 +924,7 @@ static void regs_dump__printf(u64 mask, u64 *regs, const char *arch)
 		u64 val = regs[i++];
 
 		printf(".... %-5s 0x%016" PRIx64 "\n",
-		       perf_reg_name(rid, arch), val);
+		       perf_reg_name(rid, e_machine), val);
 	}
 }
 
@@ -941,7 +942,7 @@ static inline const char *regs_dump_abi(struct regs_dump *d)
 	return regs_abi[d->abi];
 }
 
-static void regs__printf(const char *type, struct regs_dump *regs, const char *arch)
+static void regs__printf(const char *type, struct regs_dump *regs, uint16_t e_machine)
 {
 	u64 mask = regs->mask;
 
@@ -950,10 +951,10 @@ static void regs__printf(const char *type, struct regs_dump *regs, const char *a
 	       mask,
 	       regs_dump_abi(regs));
 
-	regs_dump__printf(mask, regs->regs, arch);
+	regs_dump__printf(mask, regs->regs, e_machine);
 }
 
-static void regs_user__printf(struct perf_sample *sample, const char *arch)
+static void regs_user__printf(struct perf_sample *sample, uint16_t e_machine)
 {
 	struct regs_dump *user_regs;
 
@@ -963,10 +964,10 @@ static void regs_user__printf(struct perf_sample *sample, const char *arch)
 	user_regs = perf_sample__user_regs(sample);
 
 	if (user_regs->regs)
-		regs__printf("user", user_regs, arch);
+		regs__printf("user", user_regs, e_machine);
 }
 
-static void regs_intr__printf(struct perf_sample *sample, const char *arch)
+static void regs_intr__printf(struct perf_sample *sample, uint16_t e_machine)
 {
 	struct regs_dump *intr_regs;
 
@@ -976,7 +977,7 @@ static void regs_intr__printf(struct perf_sample *sample, const char *arch)
 	intr_regs = perf_sample__intr_regs(sample);
 
 	if (intr_regs->regs)
-		regs__printf("intr", intr_regs, arch);
+		regs__printf("intr", intr_regs, e_machine);
 }
 
 static void stack_user__printf(struct stack_dump *dump)
@@ -1065,20 +1066,27 @@ char *get_page_size_name(u64 size, char *str)
 	return str;
 }
 
-static void dump_sample(struct evsel *evsel, union perf_event *event,
-			struct perf_sample *sample, const char *arch)
+static void dump_sample(struct machine *machine, struct evsel *evsel, union perf_event *event,
+			struct perf_sample *sample)
 {
 	u64 sample_type;
 	char str[PAGE_SIZE_NAME_LEN];
+	uint16_t e_machine = EM_NONE;
 
 	if (!dump_trace)
 		return;
 
+	sample_type = evsel->core.attr.sample_type;
+
+	if (sample_type & (PERF_SAMPLE_REGS_USER | PERF_SAMPLE_REGS_INTR)) {
+		struct thread *thread = machine__find_thread(machine, sample->pid, sample->pid);
+
+		e_machine = thread__e_machine(thread, machine);
+	}
+
 	printf("(IP, 0x%x): %d/%d: %#" PRIx64 " period: %" PRIu64 " addr: %#" PRIx64 "\n",
 	       event->header.misc, sample->pid, sample->tid, sample->ip,
 	       sample->period, sample->addr);
-
-	sample_type = evsel->core.attr.sample_type;
 
 	if (evsel__has_callchain(evsel))
 		callchain__printf(evsel, sample);
@@ -1087,10 +1095,10 @@ static void dump_sample(struct evsel *evsel, union perf_event *event,
 		branch_stack__printf(sample, evsel);
 
 	if (sample_type & PERF_SAMPLE_REGS_USER)
-		regs_user__printf(sample, arch);
+		regs_user__printf(sample, e_machine);
 
 	if (sample_type & PERF_SAMPLE_REGS_INTR)
-		regs_intr__printf(sample, arch);
+		regs_intr__printf(sample, e_machine);
 
 	if (sample_type & PERF_SAMPLE_STACK_USER)
 		stack_user__printf(&sample->user_stack);
@@ -1292,10 +1300,10 @@ static int machines__deliver_event(struct machines *machines,
 		}
 		if (machine == NULL) {
 			++evlist->stats.nr_unprocessable_samples;
-			dump_sample(evsel, event, sample, perf_env__arch(NULL));
+			dump_sample(machine, evsel, event, sample);
 			return 0;
 		}
-		dump_sample(evsel, event, sample, perf_env__arch(machine->env));
+		dump_sample(machine, evsel, event, sample);
 		return evlist__deliver_sample(evlist, tool, event, sample, evsel, machine);
 	case PERF_RECORD_MMAP:
 		return tool->mmap(tool, event, sample, machine);
@@ -2755,4 +2763,29 @@ int perf_session__dsos_hit_all(struct perf_session *session)
 struct perf_env *perf_session__env(struct perf_session *session)
 {
 	return &session->header.env;
+}
+
+static int perf_session__e_machine_cb(struct thread *thread,
+				      void *arg __maybe_unused)
+{
+	uint16_t *result = arg;
+	struct machine *machine = maps__machine(thread__maps(thread));
+
+	*result = thread__e_machine(thread, machine);
+	return *result != EM_NONE ? 1 : 0;
+}
+
+/*
+ * Note, a machine may have mixed 32-bit and 64-bit processes and so mixed
+ * e_machines. Use thread__e_machine when this matters.
+ */
+uint16_t perf_session__e_machine(struct perf_session *session)
+{
+	uint16_t e_machine = EM_NONE;
+
+	machines__for_each_thread(&session->machines,
+					 perf_session__e_machine_cb,
+					 &e_machine);
+
+	return e_machine == EM_NONE ? EM_HOST : e_machine;
 }
