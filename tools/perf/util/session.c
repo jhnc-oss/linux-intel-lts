@@ -916,7 +916,7 @@ static void branch_stack__printf(struct perf_sample *sample,
 	}
 }
 
-static void regs_dump__printf(u64 mask, u64 *regs, uint16_t e_machine)
+static void regs_dump__printf(u64 mask, u64 *regs, uint16_t e_machine, uint32_t e_flags)
 {
 	unsigned rid, i = 0;
 
@@ -924,7 +924,7 @@ static void regs_dump__printf(u64 mask, u64 *regs, uint16_t e_machine)
 		u64 val = regs[i++];
 
 		printf(".... %-5s 0x%016" PRIx64 "\n",
-		       perf_reg_name(rid, e_machine), val);
+		       perf_reg_name(rid, e_machine, e_flags), val);
 	}
 }
 
@@ -942,7 +942,8 @@ static inline const char *regs_dump_abi(struct regs_dump *d)
 	return regs_abi[d->abi];
 }
 
-static void regs__printf(const char *type, struct regs_dump *regs, uint16_t e_machine)
+static void regs__printf(const char *type, struct regs_dump *regs,
+			 uint16_t e_machine, uint32_t e_flags)
 {
 	u64 mask = regs->mask;
 
@@ -951,10 +952,10 @@ static void regs__printf(const char *type, struct regs_dump *regs, uint16_t e_ma
 	       mask,
 	       regs_dump_abi(regs));
 
-	regs_dump__printf(mask, regs->regs, e_machine);
+	regs_dump__printf(mask, regs->regs, e_machine, e_flags);
 }
 
-static void regs_user__printf(struct perf_sample *sample, uint16_t e_machine)
+static void regs_user__printf(struct perf_sample *sample, uint16_t e_machine, uint32_t e_flags)
 {
 	struct regs_dump *user_regs;
 
@@ -964,10 +965,10 @@ static void regs_user__printf(struct perf_sample *sample, uint16_t e_machine)
 	user_regs = perf_sample__user_regs(sample);
 
 	if (user_regs->regs)
-		regs__printf("user", user_regs, e_machine);
+		regs__printf("user", user_regs, e_machine, e_flags);
 }
 
-static void regs_intr__printf(struct perf_sample *sample, uint16_t e_machine)
+static void regs_intr__printf(struct perf_sample *sample, uint16_t e_machine, uint32_t e_flags)
 {
 	struct regs_dump *intr_regs;
 
@@ -977,7 +978,7 @@ static void regs_intr__printf(struct perf_sample *sample, uint16_t e_machine)
 	intr_regs = perf_sample__intr_regs(sample);
 
 	if (intr_regs->regs)
-		regs__printf("intr", intr_regs, e_machine);
+		regs__printf("intr", intr_regs, e_machine, e_flags);
 }
 
 static void stack_user__printf(struct stack_dump *dump)
@@ -1072,6 +1073,7 @@ static void dump_sample(struct machine *machine, struct evsel *evsel, union perf
 	u64 sample_type;
 	char str[PAGE_SIZE_NAME_LEN];
 	uint16_t e_machine = EM_NONE;
+	uint32_t e_flags = 0;
 
 	if (!dump_trace)
 		return;
@@ -1095,10 +1097,10 @@ static void dump_sample(struct machine *machine, struct evsel *evsel, union perf
 		branch_stack__printf(sample, evsel);
 
 	if (sample_type & PERF_SAMPLE_REGS_USER)
-		regs_user__printf(sample, e_machine);
+		regs_user__printf(sample, e_machine, e_flags);
 
 	if (sample_type & PERF_SAMPLE_REGS_INTR)
-		regs_intr__printf(sample, e_machine);
+		regs_intr__printf(sample, e_machine, e_flags);
 
 	if (sample_type & PERF_SAMPLE_STACK_USER)
 		stack_user__printf(&sample->user_stack);
