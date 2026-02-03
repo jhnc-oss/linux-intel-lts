@@ -66,6 +66,8 @@ __parse_regs(const struct option *opt, const char *str, int unset, bool intr)
 	if (*mode)
 		return -1;
 
+	mask = intr ? perf_intr_reg_mask(EM_HOST) : perf_user_reg_mask(EM_HOST);
+
 	/* str may be NULL in case no arg is passed to -I */
 	if (!str)
 		return -1;
