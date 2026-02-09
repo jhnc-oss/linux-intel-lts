@@ -29,21 +29,6 @@
 # CVE-2022-45885
 0001-media-dvb-core-Fix-use-after-free-due-to-race-condit.patch
 
-# CVE-2023-6039
-0001-timers-Replace-in_irq-with-in_hardirq.patch
-0002-timers-Get-rid-of-del_singleshot_timer_sync.patch
-0003-timers-Replace-BUG_ON-s.patch
-0006-timers-Rename-del_timer_sync-to-timer_delete_sync.patch
-0007-timers-Rename-del_timer-to-timer_delete.patch
-0008-timers-Silently-ignore-timers-with-a-NULL-function.patch
-0009-timers-Split-try_to_-del_timer-_sync-to-prepare-for-.patch
-0010-timers-Add-shutdown-mechanism-to-the-internal-functi.patch
-0011-timers-Provide-timer_shutdown-_sync.patch
-0012-ARM-spear-Do-not-use-timer-namespace-for-timer_shutd.patch
-0013-clocksource-drivers-arm_arch_timer-Do-not-use-timer-.patch
-0014-clocksource-drivers-sp804-Do-not-use-timer-namespace.patch
-0015-net-usb-lan78xx-reorder-cleanup-operations-to-avoid-.patch
-
 # CVE-2021-33061
 0001-ixgbevf-add-disable-link-state.patch
 0002-ixgbevf-Rename-MSGTYPE-to-SUCCESS-and-FAILURE.patch
@@ -78,46 +63,24 @@
 #CVE-2024-26777
 0001-fbdev-sis-Error-out-if-pixclock-equals-zero.patch
 
-#CVE-2024-27018
-0017-netfilter-nft_set_pipapo-release-elements-in-clone-o.patch
-0019-netfilter-nf_tables-disallow-anonymous-set-with-time.patch
-0020-netfilter-nf_tables-reject-constant-set-with-timeout.patch
-0021-netfilter-nf_tables-reject-new-basechain-after-table.patch
-0024-netfilter-nf_tables-release-batch-on-table-validatio.patch
-0025-netfilter-nf_tables-release-mutex-after-nft_gc_seq_e.patch
-
 #CVE-2022-48673
 0001-net-smc-Fix-possible-access-to-freed-memory-in-link-.patch
 
-#CVE-2024-36008
-0001-ipv4-check-for-NULL-idev-in-ip_route_use_hint.patch
 
 #CVE-2024-39484
 0001-mmc-davinci-Don-t-strip-remove-function-when-driver-.patch
 
-#CVE-2024-40954
-0001-net-do-not-leave-a-dangling-sk-pointer-when-socket-c.patch
 
-#CVE-2024-38547
-0001-media-atomisp-ssh_css-Fix-a-null-pointer-dereference.patch
 
-#CVE-2024-38549
-0001-drm-mediatek-Add-0-size-check-to-mtk_drm_gem_obj.patch
 
 #CVE-2024-38553
 0001-net-fec-remove-.ndo_poll_controller-to-avoid-deadloc.patch
 
-#CVE-2024-38555
-0001-net-mlx5-Discard-command-completions-in-internal-err.patch
 
-#CVE-2024-39466
-0001-thermal-drivers-qcom-lmh-Check-for-SCM-availability-.patch
 
 #CVE-2024-41055
 0001-mm-prevent-derefencing-NULL-ptr-in-pfn_section_valid.patch
 
-#CVE-2024-42152
-0001-nvmet-fix-a-possible-leak-when-destroy-a-ctrl-during.patch
 
 #CVE-2024-42155
 0001-s390-pkey-Wipe-copies-of-protected-and-secure-keys.patch
@@ -125,17 +88,11 @@
 #CVE-2024-42230
 0001-powerpc-pseries-Fix-scv-instruction-crash-with-kexec.patch
 
-#CVE-2024-41098
-0001-ata-libata-core-Fix-null-pointer-dereference-on-erro.patch
 
 #CVE-2024-42239
 0001-bpf-Fail-bpf_timer_cancel-when-callback-is-being-can.patch
 
-#CVE-2023-52889
-0001-apparmor-Fix-null-pointer-deref-when-receiving-skb-d.patch
 
-#CVE-2022-48772
-0001-media-lgdt3306a-Add-a-check-against-null-pointer-def.patch
 
 #CVE-2024-43817
 0001-net-missing-check-virtio.patch
@@ -146,60 +103,34 @@
 #CVE-2024-38630
 0004-watchdog-cpu5wdt.c-Fix-use-after-free-bug-caused-by-.patch
 
-#CVE-2024-40981
-0001-batman-adv-bypass-empty-buckets-in-batadv_purge_orig.patch
 
 #CVE-2023-52905
 0001-octeontx2-pf-Fix-resource-leakage-in-VF-driver-unbin.patch
 
-#CVE-2024-44995
-0001-net-hns3-fix-a-deadlock-problem-when-config-TC-durin.patch
 
-#CVE-2024-44999
-0001-gtp-pull-network-headers-in-gtp_dev_xmit.patch
 
 #CVE-2024-45015
 0001-drm-msm-dpu-move-dpu_encoder-s-connector-assignment-.patch
 
-#CVE-2024-46675
-0001-usb-dwc3-core-Prevent-USB-core-invalid-event-buffer-.patch
 
 #CVE-2024-46681
 0001-pktgen-use-cpus_read_lock-in-pg_net_init.patch
 
-#CVE-2024-46714
-0001-drm-amd-display-Skip-wbscl_set_scaler_filter-if-filt.patch
 
 #CVE-2024-46848
 0001-perf-x86-intel-Limit-the-period-on-Haswell.patch
 
-#CVE-2024-49896
-0001-drm-amd-display-Check-stream-before-comparing-them.patch
 
-#CVE-2024-49900
-0001-jfs-Fix-uninit-value-access-of-new_ea-in-ea_buffer.patch
 
 #CVE-2022-48976
 0001-netfilter-flowtable_offload-fix-using-__this_cpu_add.patch
 
-#CVE-2024-43846
-0001-lib-objagg-Fix-general-protection-fault.patch
 
 
-#CVE-2024-47679
-0001-vfs-fix-race-between-evice_inodes-and-find_inode-ipu.patch
 
-#CVE-2024-47710
-0001-sock_map-Add-a-cond_resched-in-sock_hash_free.patch
 
-#CVE-2024-49981
-0001-media-venus-fix-use-after-free-bug-in-venus_remove-d.patch
 
-#CVE-2024-49978
-0001-gso-fix-udp-gso-fraglist-segmentation-after-pull-fro.patch
 
-#CVE-2024-49867
-0001-btrfs-wait-for-fixup-workers-before-stopping-cleaner.patch
 
 #CVE-2024-49875
 0001-nfsd-move-nfserrno-to-vfs.c.patch
@@ -264,8 +195,6 @@
 #CVE-2024-46787
 0001-userfaultfd-fix-checks-for-huge-PMDs.patch
 
-#CVE-2024-47726
-0001-f2fs-fix-to-wait-dio-completion.patch
 
 #CVE-2024-49859
 0001-f2fs-do-not-allow-to-defragment-files-have-FI_COMPRE.patch
@@ -293,14 +222,10 @@
 #CVE-2024-50256
 0001-netfilter-nf_reject_ipv6-fix-potential-crash-in-nf_s.patch
 
-#CVE-2024-50271
-0001-signal-restore-the-override_rlimit-logic.patch
 
 #CVE-2024-50277
 0001-dm-fix-a-crash-if-blk_alloc_disk-fails.patch
 
-#CVE-2024-50286
-0001-ksmbd-fix-slab-use-after-free-in-ksmbd_smb2_session_.patch
 
 #CVE-2024-53051
 0001-drm-i915-hdcp-Add-encoder-check-in-intel_hdcp_get_ca.patch
@@ -310,8 +235,6 @@
 0002-f2fs-fix-to-avoid-use-after-free-in-f2fs_stop_gc_thr.patch
 0003-f2fs-fix-race-in-concurrent-f2fs_stop_gc_thread.patch
 
-#CVE-2024-53221
-0001-f2fs-fix-null-ptr-deref-in-f2fs_submit_page_bio.patch
 
 #CVE-2024-56565
 0001-block-add-a-bdev_max_discard_sectors-helper.patch
@@ -346,8 +269,6 @@
 #CVE-2025-21817
 0006-block-mark-GFP_NOIO-around-sysfs-store.patch
 
-#CVE-2025-21776
-0010-USB-hub-Ignore-non-compliant-devices-with-too-many-c.patch
 
 #CVE-2025-21768
 0013-ipv6-ioam-Prerequisite-patch-for-ioam6_iptunnel.patch
@@ -370,19 +291,10 @@
 0032-ata-libata-sff-tracepoints-for-HSM-state-machine.patch
 0033-ata-libata-sff-Ensure-that-we-cannot-write-outside-t.patch
 
-#CVE-2025-21727
-0035-padata-fix-UAF-in-padata_reorder.patch
-
-#CVE-2025-21696
-0041-userfaultfd-move-userfaultfd_ctx-struct-to-header-fi.patch
-0042-mm-uffd-PTE_MARKER_UFFD_WP.patch
-0043-mm-clear-uffd-wp-PTE-PMD-state-on-mremap.patch
 
 #CVE-2025-21693
 0044-mm-zswap-properly-synchronize-freeing-resources-duri.patch
 
-#CVE-2024-58016
-0047-safesetid-check-size-of-policy-writes.patch
 
 #CVE-2024-57993
 0056-HID-hid-thrustmaster-Fix-warning-in-thrustmaster_pro.patch
@@ -412,8 +324,6 @@
 #CVE-2022-49651
 0083-srcu-Tighten-cleanup_srcu_struct-GP-checks.patch
 
-#CVE-2022-49635
-0084-drm-i915-selftests-fix-subtraction-overflow-bug.patch
 
 #CVE-2022-49622
 0085-netfilter-nf_tables-avoid-skb-access-on-nf_stolen.patch
@@ -427,8 +337,6 @@
 #CVE-2022-49420
 0088-net-annotate-races-around-sk-sk_bound_dev_if.patch
 
-#CVE-2022-49267
-0089-mmc-core-use-sysfs_emit-instead-of-sprintf.patch
 
 #CVE-2022-49218
 0090-drm-dp-Fix-OOB-read-when-handling-Post-Cursor2-regis.patch
@@ -499,17 +407,9 @@
 0016-ext4-define-ext4_journal_destroy-wrapper.patch
 0017-ext4-avoid-journaling-sb-update-on-error-if-journal-.patch
 
-#CVE-2025-22121
-0018-ext4-introduce-ITAIL-helper.patch
-0019-ext4-fix-out-of-bound-read-in-ext4_xattr_inode_dec_r.patch
 
 #CVE-2025-23130
 0021-f2fs-fix-to-avoid-panic-once-fallocation-fails-for-p.patch
-
-#CVE-2025-23132
-0022-f2fs-avoid-dead-loop-in-f2fs_issue_checkpoint.patch
-0023-f2fs-move-release-of-block-devices-to-after-kill_blo.patch
-0024-f2fs-quota-fix-to-avoid-warning-in-dquot_writeback_d.patch
 
 #CVE-2025-37807
 0026-bpf-Fix-kmemleak-warning-for-percpu-hashmap.patch
@@ -539,11 +439,7 @@
 #CVE-2025-38215
 0003-fbdev-Fix-do_register_framebuffer-to-prevent-null-pt.patch
 
-#CVE-2025-38097
-0004-espintcp-remove-encap-socket-caching-to-avoid-refere.patch
 
-#CVE-2025-38129
-0005-page_pool-Fix-use-after-free-in-page_pool_recycle_in.patch
 
 #CVE-2025-38191
 0006-fbcon-Make-sure-modelist-not-set-on-unregistered-con.patch
@@ -596,8 +492,6 @@
 #CVE-2025-38449
 0001-drm-gem-Acquire-references-on-GEM-handles-for-frameb.patch
 
-#CVE-2025-38556
-0002-HID-core-Harden-s32ton-against-conversion-to-0-bits.patch
 
 #CVE-2025-38501
 0003-ksmbd-limit-repeated-connections-from-clients-with-t.patch
@@ -608,8 +502,6 @@
 #CVE-2025-38512
 0005-wifi-prevent-A-MSDU-attacks-in-mesh-networks.patch
 
-#CVE-2025-38562
-0006-ksmbd-fix-null-pointer-dereference-error-in-generate.patch
 
 #CVE-2025-38437
 0007-ksmbd-fix-potential-use-after-free-in-oplock-lease-b.patch
@@ -674,20 +566,14 @@
 #CVE-2025-40095
 0007-usb-gadget-f_rndis-Refactor-bind-path-to-use-__free.patch
 
-#CVE-2025-40094
-0008-usb-gadget-f_acm-Refactor-bind-path-to-use-__free.patch
 
 #CVE-2025-40077
 0009-f2fs-fix-to-avoid-overflow-while-left-shift-operatio.patch
 
-#CVE-2025-40092
-0010-usb-gadget-f_ncm-Refactor-bind-path-to-use-__free.patch
 
 #CVE-2025-40054
 0011-f2fs-fix-UAF-issue-in-f2fs_merge_page_bio.patch
 
-#CVE-2025-40040
-0012-mm-ksm-fix-flag-dropping-behavior-in-ksm_madvise.patch
 
 #CVE-2023-53620
 0013-md-Use-enum-for-overloaded-magic-numbers-used-by-mdd.patch
@@ -778,8 +664,6 @@
 #CVE-2022-50552
 0045-blk-mq-use-quiesced-elevator-switch-when-reinitializ.patch
 
-#CVE-2025-40025
-0046-backport-f2fs-fix-to-do-sanity-check-on-node-footer-.patch
 
 #CVE-2025-39990
 0047-backport-bpf-Check-the-helper-function-is-valid-in-g.patch
