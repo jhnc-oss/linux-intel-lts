@@ -89,8 +89,14 @@ u64 perf_simd_reg_value(struct pt_regs *regs, int idx,
 	if (!(perf_regs->abi & PERF_SAMPLE_REGS_ABI_SIMD))
 		return 0;
 
-	if (pred)
-		return 0;
+	if (pred) {
+		if (WARN_ON_ONCE(idx >= PERF_X86_SIMD_PRED_REGS_MAX ||
+				 qwords_idx >= PERF_X86_OPMASK_QWORDS))
+			return 0;
+		if (!perf_regs->opmask_regs)
+			return 0;
+		return perf_regs->opmask_regs[idx];
+	}
 
 	if (WARN_ON_ONCE(idx >= PERF_X86_SIMD_VEC_REGS_MAX ||
 			 qwords_idx >= PERF_X86_SIMD_QWORDS_MAX))
@@ -148,7 +154,10 @@ int perf_simd_reg_validate(u16 vec_qwords, u64 vec_mask_intr,
 			return -EINVAL;
 	}
 
-	if (pred_mask_intr || pred_mask_user)
+	if (pred_qwords != PERF_X86_OPMASK_QWORDS)
+		return -EINVAL;
+	if ((pred_mask_intr & ~PERF_X86_SIMD_PRED_MASK) ||
+	    (pred_mask_user & ~PERF_X86_SIMD_PRED_MASK))
 		return -EINVAL;
 
 	return 0;
