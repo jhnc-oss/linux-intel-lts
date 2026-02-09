@@ -709,7 +709,8 @@ int x86_pmu_hw_config(struct perf_event *event)
 
 			if (!(event->pmu->capabilities & PERF_PMU_CAP_SIMD_REGS))
 				return -EINVAL;
-			if (is_sampling_event(event) && !this_cpu_has(X86_FEATURE_XSAVES))
+			if (is_sampling_event(event) && !event->attr.precise_ip &&
+			    !this_cpu_has(X86_FEATURE_XSAVES))
 				return -EINVAL;
 			/*
 			 * The XMM space in the perf_event_x86_regs is reclaimed
