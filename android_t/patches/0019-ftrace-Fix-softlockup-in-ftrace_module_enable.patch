@@ -1,0 +1,39 @@
+From f07b814e74ff486a0b4feee318b6e7f6cd8cfb2e Mon Sep 17 00:00:00 2001
+From: Vladimir Riabchun <ferr.lambarginio@gmail.com>
+Date: Fri, 12 Sep 2025 13:28:55 +0200
+Subject: [PATCH 19/53] ftrace: Fix softlockup in ftrace_module_enable
+
+A soft lockup was observed when loading amdgpu module.
+If a module has a lot of tracable functions, multiple calls
+to kallsyms_lookup can spend too much time in RCU critical
+section and with disabled preemption, causing kernel panic.
+This is the same issue that was fixed in
+commit d0b24b4e91fc ("ftrace: Prevent RCU stall on PREEMPT_VOLUNTARY
+kernels") and commit 42ea22e754ba ("ftrace: Add cond_resched() to
+ftrace_graph_set_hash()").
+
+Fix it the same way by adding cond_resched() in ftrace_module_enable.
+
+Link: https://lore.kernel.org/aMQD9_lxYmphT-up@vova-pc
+Signed-off-by: Vladimir Riabchun <ferr.lambarginio@gmail.com>
+Signed-off-by: Steven Rostedt (Google) <rostedt@goodmis.org>
+---
+ kernel/trace/ftrace.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/kernel/trace/ftrace.c b/kernel/trace/ftrace.c
+index e27b99678514..0b63f514b18d 100644
+--- a/kernel/trace/ftrace.c
++++ b/kernel/trace/ftrace.c
+@@ -6570,6 +6570,8 @@ void ftrace_module_enable(struct module *mod)
+ 		    !within_module_init(rec->ip, mod))
+ 			break;
+ 
++		cond_resched();
++
+ 		cnt = 0;
+ 
+ 		/*
+-- 
+2.43.0
+

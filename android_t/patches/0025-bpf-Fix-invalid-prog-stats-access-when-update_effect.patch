@@ -1,0 +1,73 @@
+From b2b9e6d7b62a25e76aa4f96f1e26d16e4bb411d2 Mon Sep 17 00:00:00 2001
+From: Pu Lehui <pulehui@huawei.com>
+Date: Mon, 9 Feb 2026 19:42:05 -0800
+Subject: [PATCH 25/53] bpf: Fix invalid prog->stats access when
+ update_effective_progs fails
+
+Syzkaller triggers an invalid memory access issue following fault
+injection in update_effective_progs. The issue can be described as
+follows:
+
+__cgroup_bpf_detach
+  update_effective_progs
+    compute_effective_progs
+      bpf_prog_array_alloc <-- fault inject
+  purge_effective_progs
+    /* change to dummy_bpf_prog */
+    array->items[index] = &dummy_bpf_prog.prog
+
+---softirq start---
+__do_softirq
+  ...
+    __cgroup_bpf_run_filter_skb
+      __bpf_prog_run_save_cb
+        bpf_prog_run
+          stats = this_cpu_ptr(prog->stats)
+          /* invalid memory access */
+          flags = u64_stats_update_begin_irqsave(&stats->syncp)
+---softirq end---
+
+  static_branch_dec(&cgroup_bpf_enabled_key[atype])
+
+The reason is that fault injection caused update_effective_progs to fail
+and then changed the original prog into dummy_bpf_prog.prog in
+purge_effective_progs. Then a softirq came, and accessing the members of
+dummy_bpf_prog.prog in the softirq triggers invalid mem access.
+
+To fix it, skip updating stats when stats is NULL.
+
+Fixes: 492ecee892c2 ("bpf: enable program stats")
+Signed-off-by: Pu Lehui <pulehui@huawei.com>
+Link: https://lore.kernel.org/r/20251115102343.2200727-1-pulehui@huaweicloud.com
+Signed-off-by: Alexei Starovoitov <ast@kernel.org>
+[ Backport to 5.15.198: Applied only filter.h changes as bpf_prog_inc_misses_counter doesn't exist in this version ]
+---
+ include/linux/filter.h | 12 +++++++-----
+ 1 file changed, 7 insertions(+), 5 deletions(-)
+
+diff --git a/include/linux/filter.h b/include/linux/filter.h
+index e8d52cf2883a..d80f3b9e7def 100644
+--- a/include/linux/filter.h
++++ b/include/linux/filter.h
+@@ -619,11 +619,13 @@ static __always_inline u32 __bpf_prog_run(const struct bpf_prog *prog,
+ 		unsigned long flags;
+ 
+ 		ret = dfunc(ctx, prog->insnsi, prog->bpf_func);
+-		stats = this_cpu_ptr(prog->stats);
+-		flags = u64_stats_update_begin_irqsave(&stats->syncp);
+-		u64_stats_inc(&stats->cnt);
+-		u64_stats_add(&stats->nsecs, sched_clock() - start);
+-		u64_stats_update_end_irqrestore(&stats->syncp, flags);
++		if (likely(prog->stats)) {
++			stats = this_cpu_ptr(prog->stats);
++			flags = u64_stats_update_begin_irqsave(&stats->syncp);
++			u64_stats_inc(&stats->cnt);
++			u64_stats_add(&stats->nsecs, sched_clock() - start);
++			u64_stats_update_end_irqrestore(&stats->syncp, flags);
++		}
+ 	} else {
+ 		ret = dfunc(ctx, prog->insnsi, prog->bpf_func);
+ 	}
+-- 
+2.43.0
+

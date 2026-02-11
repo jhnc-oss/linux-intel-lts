@@ -1,0 +1,103 @@
+From 622b3a68b6b0c57f3a1c327959ccc441c77eb967 Mon Sep 17 00:00:00 2001
+From: Eric Dumazet <edumazet@google.com>
+Date: Mon, 9 Feb 2026 07:56:52 -0800
+Subject: [PATCH 35/53] dst: fix races in rt6_uncached_list_del() and
+ rt_del_uncached_list()
+
+syzbot was able to crash the kernel in rt6_uncached_list_flush_dev()
+in an interesting way [1]
+
+Crash happens in list_del_init()/INIT_LIST_HEAD() while writing
+list->prev, while the prior write on list->next went well.
+
+static inline void INIT_LIST_HEAD(struct list_head *list)
+{
+        WRITE_ONCE(list->next, list); // This went well
+        WRITE_ONCE(list->prev, list); // Crash, @list has been freed.
+}
+
+Issue here is that rt6_uncached_list_del() did not attempt to lock
+ul->lock, as list_empty(&rt->dst.rt_uncached) returned
+true because the WRITE_ONCE(list->next, list) happened on the other CPU.
+
+We might use list_del_init_careful() and list_empty_careful(),
+or make sure rt6_uncached_list_del() always grabs the spinlock
+whenever rt->dst.rt_uncached_list has been set.
+
+A similar fix is neeed for IPv4.
+
+[Ported from mainline commit 9a6f0c4d5796a]
+
+Fixes: 8d0b94afdca8 ("ipv6: Keep track of DST_NOCACHE routes in case of iface down/unregister")
+Fixes: 78df76a065ae ("ipv4: take rt_uncached_lock only if needed")
+Reported-by: syzbot+179fc225724092b8b2b2@syzkaller.appspotmail.com
+Closes: https://lore.kernel.org/netdev/6964cdf2.050a0220.eaf7.009d.GAE@google.com/T/#u
+Signed-off-by: Eric Dumazet <edumazet@google.com>
+Cc: Martin KaFai Lau <martin.lau@kernel.org>
+Reviewed-by: David Ahern <dsahern@kernel.org>
+Link: https://patch.msgid.link/20260112103825.3810713-1-edumazet@google.com
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+---
+ net/ipv4/route.c | 6 ++++--
+ net/ipv6/route.c | 6 ++++--
+ 2 files changed, 8 insertions(+), 4 deletions(-)
+
+diff --git a/net/ipv4/route.c b/net/ipv4/route.c
+index 300f7e62a464..5d31ebfd3eaa 100644
+--- a/net/ipv4/route.c
++++ b/net/ipv4/route.c
+@@ -1531,9 +1531,9 @@ void rt_add_uncached_list(struct rtable *rt)
+ 
+ void rt_del_uncached_list(struct rtable *rt)
+ {
+-	if (!list_empty(&rt->rt_uncached)) {
+-		struct uncached_list *ul = rt->rt_uncached_list;
++	struct uncached_list *ul = rt->rt_uncached_list;
+ 
++	if (ul) {
+ 		spin_lock_bh(&ul->lock);
+ 		list_del(&rt->rt_uncached);
+ 		spin_unlock_bh(&ul->lock);
+@@ -1656,6 +1656,7 @@ struct rtable *rt_dst_alloc(struct net_device *dev,
+ 		rt->rt_gw_family = 0;
+ 		rt->rt_gw4 = 0;
+ 		INIT_LIST_HEAD(&rt->rt_uncached);
++		rt->rt_uncached_list = NULL;
+ 
+ 		rt->dst.output = ip_output;
+ 		if (flags & RTCF_LOCAL)
+@@ -2885,6 +2886,7 @@ struct dst_entry *ipv4_blackhole_route(struct net *net, struct dst_entry *dst_or
+ 			rt->rt_gw6 = ort->rt_gw6;
+ 
+ 		INIT_LIST_HEAD(&rt->rt_uncached);
++		rt->rt_uncached_list = NULL;
+ 	}
+ 
+ 	dst_release(dst_orig);
+diff --git a/net/ipv6/route.c b/net/ipv6/route.c
+index b252b784c27a..da2e389985b6 100644
+--- a/net/ipv6/route.c
++++ b/net/ipv6/route.c
+@@ -148,8 +148,9 @@ void rt6_uncached_list_add(struct rt6_info *rt)
+ 
+ void rt6_uncached_list_del(struct rt6_info *rt)
+ {
+-	if (!list_empty(&rt->rt6i_uncached)) {
+-		struct uncached_list *ul = rt->rt6i_uncached_list;
++	struct uncached_list *ul = rt->rt6i_uncached_list;
++
++	if (ul) {
+ 		struct net *net = dev_net(rt->dst.dev);
+ 
+ 		spin_lock_bh(&ul->lock);
+@@ -333,6 +334,7 @@ static void rt6_info_init(struct rt6_info *rt)
+ 
+ 	memset(dst + 1, 0, sizeof(*rt) - sizeof(*dst));
+ 	INIT_LIST_HEAD(&rt->rt6i_uncached);
++	rt->rt6i_uncached_list = NULL;
+ }
+ 
+ /* allocate dst with ip6_dst_ops */
+-- 
+2.43.0
+

@@ -1,0 +1,49 @@
+From 97521197c802db9f20eaba7fb73e8b1e55e98cfe Mon Sep 17 00:00:00 2001
+From: Qianchang Zhao <pioooooooooip@gmail.com>
+Date: Mon, 9 Feb 2026 19:03:17 -0800
+Subject: [PATCH 26/53] ksmbd: skip lock-range check on equal size to avoid
+ size==0 underflow
+
+When size equals the current i_size (including 0), the code used to call
+check_lock_range(filp, i_size, size - 1, WRITE), which computes `size - 1`
+and can underflow for size==0. Skip the equal case.
+
+Cc: stable@vger.kernel.org
+Reported-by: Qianchang Zhao <pioooooooooip@gmail.com>
+Reported-by: Zhitong Liu <liuzhitong1993@gmail.com>
+Signed-off-by: Qianchang Zhao <pioooooooooip@gmail.com>
+Acked-by: Namjae Jeon <linkinjeon@kernel.org>
+Signed-off-by: Steve French <stfrench@microsoft.com>
+(cherry picked from commit 5d510ac31626ed157d2182149559430350cf2104)
+[ Backport note: Adapted for 5.15 kernel - used file_inode(filp)->i_flctx
+  instead of locks_inode_context(file_inode(filp)) in check_lock_range ]
+---
+ fs/ksmbd/vfs.c | 5 ++++-
+ 1 file changed, 4 insertions(+), 1 deletion(-)
+
+diff --git a/fs/ksmbd/vfs.c b/fs/ksmbd/vfs.c
+index 4804976c0c13..e06376d043c7 100644
+--- a/fs/ksmbd/vfs.c
++++ b/fs/ksmbd/vfs.c
+@@ -329,6 +329,9 @@ static int check_lock_range(struct file *filp, loff_t start, loff_t end,
+ 	struct file_lock_context *ctx = file_inode(filp)->i_flctx;
+ 	int error = 0;
+ 
++	if (start == end)
++		return 0;
++
+ 	if (!ctx || list_empty_careful(&ctx->flc_posix))
+ 		return 0;
+ 
+@@ -822,7 +825,7 @@ int ksmbd_vfs_truncate(struct ksmbd_work *work,
+ 		if (size < inode->i_size) {
+ 			err = check_lock_range(filp, size,
+ 					       inode->i_size - 1, WRITE);
+-		} else {
++		} else if (size > inode->i_size) {
+ 			err = check_lock_range(filp, inode->i_size,
+ 					       size - 1, WRITE);
+ 		}
+-- 
+2.43.0
+

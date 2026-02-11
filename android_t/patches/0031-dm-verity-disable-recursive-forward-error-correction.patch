@@ -1,0 +1,77 @@
+From 64ebdcaa938aa586659429c73f5390a700f00052 Mon Sep 17 00:00:00 2001
+From: Mikulas Patocka <mpatocka@redhat.com>
+Date: Mon, 9 Feb 2026 08:22:50 -0800
+Subject: [PATCH 31/53] dm-verity: disable recursive forward error correction
+
+There are two problems with the recursive correction:
+
+1. It may cause denial-of-service. In fec_read_bufs, there is a loop that
+has 253 iterations. For each iteration, we may call verity_hash_for_block
+recursively. There is a limit of 4 nested recursions - that means that
+there may be at most 253^4 (4 billion) iterations. Red Hat QE team
+actually created an image that pushes dm-verity to this limit - and this
+image just makes the udev-worker process get stuck in the 'D' state.
+
+2. It doesn't work. In fec_read_bufs we store data into the variable
+"fio->bufs", but fio bufs is shared between recursive invocations, if
+"verity_hash_for_block" invoked correction recursively, it would
+overwrite partially filled fio->bufs.
+
+[Ported from mainline commit d9f3e47d3fae0]
+
+Signed-off-by: Mikulas Patocka <mpatocka@redhat.com>
+Reported-by: Guangwu Zhang <guazhang@redhat.com>
+Reviewed-by: Sami Tolvanen <samitolvanen@google.com>
+Reviewed-by: Eric Biggers <ebiggers@kernel.org>
+---
+ drivers/md/dm-verity-fec.c    | 4 +---
+ drivers/md/dm-verity-fec.h    | 3 ---
+ drivers/md/dm-verity-target.c | 2 +-
+ 3 files changed, 2 insertions(+), 7 deletions(-)
+
+diff --git a/drivers/md/dm-verity-fec.c b/drivers/md/dm-verity-fec.c
+index 0e4ede067cf0..7e608a2c547e 100644
+--- a/drivers/md/dm-verity-fec.c
++++ b/drivers/md/dm-verity-fec.c
+@@ -426,10 +426,8 @@ int verity_fec_decode(struct dm_verity *v, struct dm_verity_io *io,
+ 	if (!verity_fec_is_enabled(v))
+ 		return -EOPNOTSUPP;
+ 
+-	if (fio->level >= DM_VERITY_FEC_MAX_RECURSION) {
+-		DMWARN_LIMIT("%s: FEC: recursion too deep", v->data_dev->name);
++	if (fio->level)
+ 		return -EIO;
+-	}
+ 
+ 	fio->level++;
+ 
+diff --git a/drivers/md/dm-verity-fec.h b/drivers/md/dm-verity-fec.h
+index 3c46c8d61883..0f217775f11e 100644
+--- a/drivers/md/dm-verity-fec.h
++++ b/drivers/md/dm-verity-fec.h
+@@ -23,9 +23,6 @@
+ #define DM_VERITY_FEC_BUF_MAX \
+ 	(1 << (PAGE_SHIFT - DM_VERITY_FEC_BUF_RS_BITS))
+ 
+-/* maximum recursion level for verity_fec_decode */
+-#define DM_VERITY_FEC_MAX_RECURSION	4
+-
+ #define DM_VERITY_OPT_FEC_DEV		"use_fec_from_device"
+ #define DM_VERITY_OPT_FEC_BLOCKS	"fec_blocks"
+ #define DM_VERITY_OPT_FEC_START		"fec_start"
+diff --git a/drivers/md/dm-verity-target.c b/drivers/md/dm-verity-target.c
+index eba9a12f0d1a..e4c35f2fe634 100644
+--- a/drivers/md/dm-verity-target.c
++++ b/drivers/md/dm-verity-target.c
+@@ -1329,7 +1329,7 @@ static int verity_ctr(struct dm_target *ti, unsigned argc, char **argv)
+ static struct target_type verity_target = {
+ 	.name		= "verity",
+ 	.features	= DM_TARGET_IMMUTABLE,
+-	.version	= {1, 8, 0},
++	.version	= {1, 9, 0},
+ 	.module		= THIS_MODULE,
+ 	.ctr		= verity_ctr,
+ 	.dtr		= verity_dtr,
+-- 
+2.43.0
+

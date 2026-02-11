@@ -1,0 +1,58 @@
+From 95136337fdd9fa9ae29b3da0d93d527cb0b60f54 Mon Sep 17 00:00:00 2001
+From: Zhu Yanjun <yanjun.zhu@linux.dev>
+Date: Mon, 9 Feb 2026 20:10:31 -0800
+Subject: [PATCH 24/53] RDMA/rxe: Fix null deref on srq->rq.queue after resize
+ failure
+
+A NULL pointer dereference can occur in rxe_srq_chk_attr() when
+ibv_modify_srq() is invoked twice in succession under certain error
+conditions. The first call may fail in rxe_queue_resize(), which leads
+rxe_srq_from_attr() to set srq->rq.queue = NULL. The second call then
+triggers a crash (null deref) when accessing
+srq->rq.queue->buf->index_mask.
+
+Call Trace:
+<TASK>
+rxe_modify_srq+0x170/0x480 [rdma_rxe]
+ib_uverbs_modify_srq+0x204/0x290 [ib_uverbs]
+ib_uverbs_handler_UVERBS_METHOD_INVOKE_WRITE+0x2c0/0x470 [ib_uverbs]
+ib_uverbs_run_method+0x55a/0x6e0 [ib_uverbs]
+ib_uverbs_cmd_verbs+0x54d/0x800 [ib_uverbs]
+ib_uverbs_ioctl+0x13e/0x220 [ib_uverbs]
+__x64_sys_ioctl+0x138/0x1c0
+
+Fixes: 8700e3e7c485 ("Soft RoCE driver")
+Tested-by: Liu Yi <asatsuyu.liu@gmail.com>
+Signed-off-by: Zhu Yanjun <yanjun.zhu@linux.dev>
+Link: https://patch.msgid.link/20251027215203.1321-1-yanjun.zhu@linux.dev
+Signed-off-by: Leon Romanovsky <leon@kernel.org>
+[ Backport to 5.15.198: Applied cleanly, no context changes needed ]
+---
+ drivers/infiniband/sw/rxe/rxe_srq.c | 7 +------
+ 1 file changed, 1 insertion(+), 6 deletions(-)
+
+diff --git a/drivers/infiniband/sw/rxe/rxe_srq.c b/drivers/infiniband/sw/rxe/rxe_srq.c
+index eb1c4c3b3a78..147bf9e31a31 100644
+--- a/drivers/infiniband/sw/rxe/rxe_srq.c
++++ b/drivers/infiniband/sw/rxe/rxe_srq.c
+@@ -141,16 +141,11 @@ int rxe_srq_from_attr(struct rxe_dev *rxe, struct rxe_srq *srq,
+ 				       &srq->rq.producer_lock,
+ 				       &srq->rq.consumer_lock);
+ 		if (err)
+-			goto err2;
++			return err;
+ 	}
+ 
+ 	if (mask & IB_SRQ_LIMIT)
+ 		srq->limit = attr->srq_limit;
+ 
+ 	return 0;
+-
+-err2:
+-	rxe_queue_cleanup(q);
+-	srq->rq.queue = NULL;
+-	return err;
+ }
+-- 
+2.43.0
+

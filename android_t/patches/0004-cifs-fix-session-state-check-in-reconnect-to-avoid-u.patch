@@ -1,0 +1,37 @@
+From cd630228f1605875c67edb50b46ab7e6d860d2f6 Mon Sep 17 00:00:00 2001
+From: Winston Wen <wentao@uniontech.com>
+Date: Mon, 26 Jun 2023 11:42:56 +0800
+Subject: [PATCH 04/53] cifs: fix session state check in reconnect to avoid
+ use-after-free issue
+
+Don't collect exiting session in smb2_reconnect_server(), because it
+will be released soon.
+
+Note that the exiting session will stay in server->smb_ses_list until
+it complete the cifs_free_ipc() and logoff() and then delete itself
+from the list.
+
+Signed-off-by: Winston Wen <wentao@uniontech.com>
+Reviewed-by: Shyam Prasad N <sprasad@microsoft.com>
+Signed-off-by: Steve French <stfrench@microsoft.com>
+---
+ fs/cifs/smb2pdu.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/fs/cifs/smb2pdu.c b/fs/cifs/smb2pdu.c
+index 302c08dfb686..ac84a324f542 100644
+--- a/fs/cifs/smb2pdu.c
++++ b/fs/cifs/smb2pdu.c
+@@ -3768,6 +3768,9 @@ void smb2_reconnect_server(struct work_struct *work)
+ 
+ 	spin_lock(&cifs_tcp_ses_lock);
+ 	list_for_each_entry(ses, &server->smb_ses_list, smb_ses_list) {
++		if (cifs_ses_exiting(ses))
++			continue;
++
+ 		list_for_each_entry(tcon, &ses->tcon_list, tcon_list) {
+ 			if (tcon->need_reconnect || tcon->need_reopen_files) {
+ 				tcon->tc_count++;
+-- 
+2.43.0
+

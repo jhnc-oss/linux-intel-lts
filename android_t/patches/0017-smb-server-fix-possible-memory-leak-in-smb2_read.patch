@@ -1,0 +1,32 @@
+From d648191a1bc9ceb175558faf7bb1d5d384439cb1 Mon Sep 17 00:00:00 2001
+From: ZhangGuoDong <zhangguodong@kylinos.cn>
+Date: Sun, 12 Oct 2025 00:47:59 +0800
+Subject: [PATCH 17/53] smb/server: fix possible memory leak in smb2_read()
+
+Memory leak occurs when ksmbd_vfs_read() fails.
+Fix this by adding the missing kvfree().
+
+Co-developed-by: ChenXiaoSong <chenxiaosong@kylinos.cn>
+Signed-off-by: ChenXiaoSong <chenxiaosong@kylinos.cn>
+Signed-off-by: ZhangGuoDong <zhangguodong@kylinos.cn>
+Acked-by: Namjae Jeon <linkinjeon@kernel.org>
+Signed-off-by: Steve French <stfrench@microsoft.com>
+---
+ fs/ksmbd/smb2pdu.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/fs/ksmbd/smb2pdu.c b/fs/ksmbd/smb2pdu.c
+index c0b5985701bf..c7c111def9eb 100644
+--- a/fs/ksmbd/smb2pdu.c
++++ b/fs/ksmbd/smb2pdu.c
+@@ -6370,6 +6370,7 @@ int smb2_read(struct ksmbd_work *work)
+ 
+ 	nbytes = ksmbd_vfs_read(work, fp, length, &offset, aux_payload_buf);
+ 	if (nbytes < 0) {
++		kvfree(aux_payload_buf);
+ 		err = nbytes;
+ 		goto out;
+ 	}
+-- 
+2.43.0
+

@@ -1,0 +1,43 @@
+From 18dd6c1e5de8cfcc70cff5107c2468fb0d164e33 Mon Sep 17 00:00:00 2001
+From: Andrii Nakryiko <andrii@kernel.org>
+Date: Tue, 16 May 2023 11:04:09 -0700
+Subject: [PATCH 09/53] bpf: drop unnecessary user-triggerable WARN_ONCE in
+ verifierl log
+
+It's trivial for user to trigger "verifier log line truncated" warning,
+as verifier has a fixed-sized buffer of 1024 bytes (as of now), and there are at
+least two pieces of user-provided information that can be output through
+this buffer, and both can be arbitrarily sized by user:
+  - BTF names;
+  - BTF.ext source code lines strings.
+
+Verifier log buffer should be properly sized for typical verifier state
+output. But it's sort-of expected that this buffer won't be long enough
+in some circumstances. So let's drop the check. In any case code will
+work correctly, at worst truncating a part of a single line output.
+
+Reported-by: syzbot+8b2a08dfbd25fd933d75@syzkaller.appspotmail.com
+Signed-off-by: Andrii Nakryiko <andrii@kernel.org>
+Link: https://lore.kernel.org/r/20230516180409.3549088-1-andrii@kernel.org
+Signed-off-by: Alexei Starovoitov <ast@kernel.org>
+---
+ kernel/bpf/verifier.c | 3 ---
+ 1 file changed, 3 deletions(-)
+
+diff --git a/kernel/bpf/verifier.c b/kernel/bpf/verifier.c
+index 4587e60fba02..137945f8bec4 100644
+--- a/kernel/bpf/verifier.c
++++ b/kernel/bpf/verifier.c
+@@ -290,9 +290,6 @@ void bpf_verifier_vlog(struct bpf_verifier_log *log, const char *fmt,
+ 
+ 	n = vscnprintf(log->kbuf, BPF_VERIFIER_TMP_LOG_SIZE, fmt, args);
+ 
+-	WARN_ONCE(n >= BPF_VERIFIER_TMP_LOG_SIZE - 1,
+-		  "verifier log line truncated - local buffer too short\n");
+-
+ 	n = min(log->len_total - log->len_used - 1, n);
+ 	log->kbuf[n] = '\0';
+ 
+-- 
+2.43.0
+
