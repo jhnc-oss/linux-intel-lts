@@ -24,15 +24,18 @@ Note: This should only be used for Intel platform feature evaluation and not for
 
 [6] x.xx/andoird_t-cve ==> Fix CVE patches detected on x.xx/android_t branch. Same naming rule also apply to other LTS kernel version and other Android dessert.
 
-### Active branch list - Monthly update **2025 May**
+### Active branch list - Monthly update **2026 Feb**
 
 | Kernel Version | Active Branches |
 |---------------:|-----------------|
-| v6.12          | [6.12/linux](https://github.com/intel/linux-intel-lts/tree/6.12/linux) |
-| v6.12          | [6.12/linux-cve](https://github.com/intel/linux-intel-lts/tree/6.12/linux-cve) |
+| v6.18          | [6.18/linux](https://github.com/intel/linux-intel-lts/tree/6.18/linux) |
+| v6.18          | [6.18/linux-cve](https://github.com/intel/linux-intel-lts/tree/6.18/linux-cve)  no cve fixes as of 2026ww07|
+| v6.18          | [6.18/emt](https://github.com/intel/linux-intel-lts/tree/6.18/emt) |
+| v6.18          | [6.18/emt-cve](https://github.com/intel/linux-intel-lts/tree/6.18/emt-cve) |
 | v6.12          | [6.12/emt](https://github.com/intel/linux-intel-lts/tree/6.12/emt) |
 | v6.12          | [6.12/emt-cve](https://github.com/intel/linux-intel-lts/tree/6.12/emt-cve) |
-| v6.12          | [6.12/dovetail-xenomai](https://github.com/intel/linux-intel-lts/tree/6.12/dovetail-xenomai) |
+| v6.12          | [6.12/android_v](https://github.com/intel/linux-intel-lts/tree/6.12/android_v) |
+| v6.12          | [6.12/android_v-cve](https://github.com/intel/linux-intel-lts/tree/6.12/android_v-cve) |
 | v5.15          | [5.15/android_t](https://github.com/intel/linux-intel-lts/tree/5.15/android_t) |
 | v5.15          | [5.15/android_t-cve](https://github.com/intel/linux-intel-lts/tree/5.15/android_t-cve) |
 | v5.15          | [5.15/android_u](https://github.com/intel/linux-intel-lts/tree/5.15/android_u) |
