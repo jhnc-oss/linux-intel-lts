@@ -674,9 +674,6 @@
 #CVE-2025-39838
 0049-cifs-prevent-NULL-pointer-dereference-in-UTF16-conve.patch
 
-#CVE-2022-50704
-0001-USB-gadget-Fix-use-after-free-during-usb-config-swit.patch
-
 #CVE-2022-50708
 0002-HSI-ssi_protocol-fix-potential-resource-leak-in-ssip.patch
 
@@ -713,9 +710,6 @@
 
 #CVE-2025-38656
 0014-wifi-iwlwifi-Fix-error-code-in-iwl_op_mode_dvm_start.patch
-
-#CVE-2025-40164
-0015-usbnet-Fix-using-smp_processor_id-in-preemptible-cod.patch
 
 #CVE-2025-40268
 0016-cifs-client-fix-memory-leak-in-smb3_fs_context_parse.patch
@@ -758,9 +752,6 @@
 
 #CVE-2025-68822
 0029-Input-alps-fix-use-after-free-bugs-caused-by-dev3_re.patch
-
-#CVE-2025-71074
-0030-functionfs-fix-the-open-removal-races.patch
 
 #CVE-2025-71161
 0031-dm-verity-disable-recursive-forward-error-correction.patch
