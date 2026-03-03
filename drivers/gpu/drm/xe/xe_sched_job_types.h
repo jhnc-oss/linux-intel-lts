@@ -56,6 +56,8 @@ struct xe_sched_job {
 	u32 migrate_flush_flags;
 	/** @ring_ops_flush_tlb: The ring ops need to flush TLB before payload. */
 	bool ring_ops_flush_tlb;
+	/** @ring_ops_force_reset: The ring ops need to trigger a reset before payload. */
+	bool ring_ops_force_reset;
 	/** @ggtt: mapped in ggtt. */
 	bool ggtt;
 	/** @ptrs: per instance pointers. */
