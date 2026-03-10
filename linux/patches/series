@@ -96,7 +96,7 @@
 #CVE-2025-38621
 0003-md-make-rdev_addable-usable-for-rcu-mode.patch
 
-#CVE-2025-39789 
+#CVE-2025-39789
 0001-crypto-x86-aegis-Add-missing-error-checks.patch
 
 #CVE-2025-39764
@@ -105,7 +105,7 @@
 #CVE-2025-39745
 0003-rcutorture-Fix-rcutorture_one_extend_check-splat-in-.patch
 
-#CVE-2025-39677 
+#CVE-2025-39677
 0004-net-sched-Fix-backlog-accounting-in-qdisc_dequeue_in.patch
 
 #CVE-2025-39859
@@ -197,4 +197,51 @@
 #CVE-2025-68334
 0063-platform-x86-amd-pmc-Add-support-for-Van-Gogh-SoC.patch
 
+#CVE-2025-40338
+0001-ASoC-Intel-avs-Do-not-share-the-name-pointer-between.patch
 
+#CVE-2025-68768
+0002-inet-frags-flush-pending-skbs-in-fqdir_pre_exit.patch
+
+#CVE-2025-71074
+0003-functionfs-fix-the-open-removal-races.patch
+
+#CVE-2025-71117
+0004-block-Remove-queue-freezing-from-several-sysfs-store.patch
+
+#CVE-2025-71221
+0005-dmaengine-mmp_pdma-Fix-race-condition-in-mmp_pdma_re.patch
+
+#CVE-2026-22993
+0006-idpf-Fix-RSS-LUT-NULL-ptr-issue-after-soft-reset.patch
+
+#CVE-2026-23157
+0007-btrfs-do-not-strictly-require-dirty-metadata-thresho.patch
+
+#CVE-2026-23004
+0008-dst-fix-races-in-rt6_uncached_list_del-and-rt_del_un.patch
+
+#CVE-2026-23066
+0009-rxrpc-Fix-recvmsg-unconditional-requeue.patch
+
+#CVE-2026-23104
+0010-ice-fix-devlink-reload-call-trace.patch
+
+#CVE-2026-23137
+0011-cleanup-Provide-retain_and_null_ptr.patch
+0012-of-unittest-Fix-memory-leak-in-unittest_data_add.patch
+
+#CVE-2026-23138
+0013-tracing-Add-recursion-protection-in-kernel-stack-tra.patch
+
+#CVE-2026-23171
+0014-bonding-fix-use-after-free-due-to-enslave-fail-after.patch
+
+#CVE-2026-23210
+0015-ice-Fix-PTP-NULL-pointer-dereference-during-VSI-rebu.patch
+
+#CVE-2026-23226
+0016-ksmbd-add-chann_lock-to-protect-ksmbd_chann_list-xar.patch
+
+#CVE-2025-71152
+0017-net-dsa-properly-keep-track-of-conduit-reference.patch
