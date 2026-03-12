@@ -23,9 +23,6 @@
 0016-drm-i915-vga-Convert-VGA-code-to-intel_display.patch
 0017-drm-i915-Grab-intel_display-from-the-encoder-to-avoi.patch
 
-#CVE-2025-40325
-0001-md-raid10-wait-barrier-before-returning-discard-requ.patch
-
 #CVE-2025-23132
 0007-f2fs-quota-fix-to-avoid-warning-in-dquot_writeback_d.patch
 
@@ -38,12 +35,6 @@
 #CVE-2025-22104
 0020-ibmvnic-Use-kernel-helpers-for-hex-dumps.patch
 
-#CVE-2024-58097
-0024-wifi-ath11k-fix-RCU-stall-while-reaping-monitor-dest.patch
-
-#CVE-2024-58096
-0025-wifi-ath11k-add-srng-lock-for-ath11k_hal_srng_-in-mo.patch
-
 #CVE-2024-58095
 0026-jfs-add-check-read-only-before-txBeginAnon-call.patch
 
@@ -55,9 +46,6 @@
 
 #CVE-2025-22116
 0029-idpf-check-error-for-register_netdev-on-init.patch
-
-#CVE-2025-22111
-0033-net-Remove-RTNL-dance-for-SIOCBRADDIF-and-SIOCBRDELI.patch
 
 #CVE-2025-22109
 0034-ax25-Remove-broken-autobind.patch
@@ -80,12 +68,6 @@
 #CVE-2025-38029
 0001-kasan-avoid-sleepable-page-allocation-from-atomic-co.patch
 
-#CVE-2025-38248
-0004-bridge-mcast-Fix-use-after-free-during-router-port-c.patch
-
-#CVE-2025-38234
-0006-sched-rt-Fix-race-in-push_rt_task.patch
-
 #CVE-2025-38205
 0007-drm-amd-display-Avoid-divide-by-zero-by-initializing.patch
 
@@ -98,11 +80,6 @@
 
 #CVE-2025-38140
 0011-dm-limit-swapping-tables-for-devices-with-zone-write.patch
-
-#CVE-2025-38284
-0013-wifi-rtw89-pci-consolidate-PCI-basic-configurations-.patch
-0014-wifi-rtw89-pci-disable-PCI-completion-timeout-contro.patch
-0015-wifi-rtw89-pci-configure-manual-DAC-mode-via-PCI-con.patch
 
 #CVE-2025-38137
 0017-PCI-pwrctrl-Cancel-outstanding-rescan-work-when-unre.patch
@@ -119,7 +96,7 @@
 #CVE-2025-38621
 0003-md-make-rdev_addable-usable-for-rcu-mode.patch
 
-#CVE-2025-39789 
+#CVE-2025-39789
 0001-crypto-x86-aegis-Add-missing-error-checks.patch
 
 #CVE-2025-39764
@@ -128,7 +105,7 @@
 #CVE-2025-39745
 0003-rcutorture-Fix-rcutorture_one_extend_check-splat-in-.patch
 
-#CVE-2025-39677 
+#CVE-2025-39677
 0004-net-sched-Fix-backlog-accounting-in-qdisc_dequeue_in.patch
 
 #CVE-2025-39859
@@ -153,18 +130,11 @@
 #CVE-2025-40064
 0004-smc-Fix-use-after-free-in-__pnet_find_base_ndev.patch
 
-#CVE-2025-40075
-0005-net-dst-introduce-dst-dev_rcu.patch
-0006-tcp_metrics-use-dst_dev_net_rcu.patch
-
 #CVE-2025-40074
 0007-ipv4-start-using-dst_dev_rcu.patch
 
 #CVE-2025-40130
 0001-scsi-ufs-core-Fix-data-race-in-CPU-latency-PM-QoS-re.patch
-
-#CVE-2025-40135
-0002-ipv6-use-RCU-in-ip6_xmit.patch
 
 #CVE-2025-40136
 0003-crypto-hisilicon-qm-request-reserved-interrupt-for-v.patch
@@ -175,51 +145,18 @@
 #CVE-2025-40147
 0005-blk-throttle-fix-access-race-during-throttle-policy-.patch
 
-#CVE-2025-40158
-0006-ipv6-use-RCU-in-ip6_output.patch
-
-#CVE-2025-40164
-0007-usbnet-Fix-using-smp_processor_id-in-preemptible-cod.patch
-
 #CVE-2025-40139
 0008-smc-Use-__sk_dst_get-and-dst_dev_rcu-in-smc_clc_prfx.patch
 
 #CVE-2025-40150
 0009-f2fs-fix-to-avoid-migrating-empty-section.patch
 
-#CVE-2025-40149
-0010-tls-Use-__sk_dst_get-and-dst_dev_rcu-in-get_netdev_f.patch
-
-#CVE-2025-40170
-0011-net-use-dst_dev_rcu-in-sk_setup_caps.patch
-
-#CVE-2025-40215
-0001-xfrm-delete-x-tunnel-as-we-delete-x.patch
-
 #CVE-2025-38656
 0002-wifi-iwlwifi-return-ERR_PTR-from-opmode-start.patch
 0003-wifi-iwlwifi-Fix-error-code-in-iwl_op_mode_dvm_start.patch
 
-#CVE-2025-38591
-0004-bpf-Reject-narrower-access-to-pointer-ctx-fields.patch
-
 #CVE-2025-38584
 0005-padata-Fix-pd-UAF-once-and-for-all.patch
-
-#CVE-2025-68363
-0001-bpf-Check-skb-transport_header-is-set-in-bpf_skb_che.patch
-
-#CVE-2025-68362
-0002-wifi-rtl818x-rtl8187-Fix-potential-buffer-underflow-.patch
-
-#CVE-2025-68361
-0003-erofs-limit-the-level-of-fs-stacking-for-file-backed.patch
-
-#CVE-2025-68749
-0004-accel-ivpu-Fix-race-condition-when-unbinding-BOs.patch
-
-#CVE-2025-68206
-0005-netfilter-nft_ct-add-seqadj-extension-for-natted-con.patch
 
 #CVE-2025-68360
 0006-wifi-mt76-wed-use-proper-wed-reference-in-mt76-wed-d.patch
@@ -227,143 +164,23 @@
 #CVE-2025-68745
 0007-scsi-qla2xxx-Clear-cmds-after-chip-reset.patch
 
-#CVE-2025-68358
-0008-btrfs-fix-racy-bitfield-write-in-btrfs_clear_space_i.patch
-
-#CVE-2025-68742
-0009-bpf-Fix-invalid-prog-stats-access-when-update_effect.patch
-
 #CVE-2025-68193
 0010-drm-xe-guc-Add-devm-release-action-to-safely-tear-do.patch
 
 #CVE-2025-40355
 0011-sysfs-check-visibility-before-changing-group-attribu.patch
 
-#CVE-2025-68357
-0012-iomap-allocate-s_dio_done_wq-for-async-reads-as-well.patch
-
-#CVE-2025-68354
-0013-regulator-core-Protect-regulator_supply_alias_list-w.patch
-
-#CVE-2025-68356
-0014-gfs2-Prevent-recursive-memory-reclaim.patch
-
-#CVE-2025-68733
-0015-smack-fix-bug-unprivileged-task-can-create-labels.patch
-
-#CVE-2025-68366
-0016-nbd-defer-config-unlock-in-nbd_genl_connect.patch
-
-#CVE-2025-68367
-0017-macintosh-mac_hid-fix-race-condition-in-mac_hid_togg.patch
-
 #CVE-2025-68368
 0018-md-init-bioset-in-mddev_init.patch
-
-#CVE-2025-68371
-0019-scsi-smartpqi-Fix-device-resources-accessed-after-de.patch
-
-#CVE-2025-68378
-0020-bpf-Fix-stackmap-overflow-check-in-__bpf_get_stackid.patch
-
-#CVE-2025-68372
-0021-nbd-defer-config-put-in-recv_work.patch
-
-#CVE-2025-68374
-0022-md-fix-rcu-protection-in-md_wakeup_thread.patch
-
-#CVE-2025-68379
-0023-RDMA-rxe-Fix-null-deref-on-srq-rq.queue-after-resize.patch
-
-#CVE-2025-68724
-0024-crypto-asymmetric_keys-prevent-overflow-in-asymmetri.patch
-
-#CVE-2025-68725
-0025-bpf-Do-not-let-BPF-test-infra-emit-invalid-GSO-types.patch
-
-#CVE-2025-68727
-0026-ntfs3-Fix-uninit-buffer-allocated-by-__getname.patch
-
-#CVE-2025-68728
-0027-ntfs3-fix-uninit-memory-after-failed-mi_read-in-mi_f.patch
-
-#CVE-2025-68333
-0028-sched_ext-Fix-possible-deadlock-in-the-deferred_irq_.patch
-
-#CVE-2025-68335
-0029-comedi-pcl818-fix-null-ptr-deref-in-pcl818_ai_cancel.patch
-
-#CVE-2025-68336
-0030-locking-spinlock-debug-Fix-data-race-in-do_raw_write.patch
-
-#CVE-2025-68332
-0031-comedi-c6xdigio-Fix-invalid-PNP-driver-unregistratio.patch
-
-#CVE-2025-68337
-0032-jbd2-avoid-bug_on-in-jbd2_journal_get_create_access-.patch
-
-#CVE-2025-68263
-0033-ksmbd-ipc-fix-use-after-free-in-ipc_msg_send_request.patch
-
-#CVE-2025-68732
-0034-gpu-host1x-Fix-race-in-syncpt-alloc-free.patch
-
-#CVE-2025-68261
-0035-ext4-add-i_data_sem-protection-in-ext4_destroy_inlin.patch
-
-#CVE-2025-68259
-0036-KVM-SVM-Don-t-skip-unrelated-instruction-if-INT3-INT.patch
 
 #CVE-2025-68736
 0037-landlock-Fix-handling-of-disconnected-directories.patch
 
-#CVE-2025-68257
-0038-comedi-check-device-s-attached-status-in-compat-ioct.patch
-
-#CVE-2025-68256
-0039-staging-rtl8723bs-fix-out-of-bounds-read-in-rtw_get_.patch
-
-#CVE-2025-68254
-0040-staging-rtl8723bs-fix-out-of-bounds-read-in-OnBeacon.patch
-
-#CVE-2025-68258
-0041-comedi-multiq3-sanitize-config-options-in-multiq3_at.patch
-
-#CVE-2025-68255
-0042-staging-rtl8723bs-fix-stack-buffer-overflow-in-OnAss.patch
-
-#CVE-2025-68264
-0043-ext4-refresh-inline-data-size-before-write-operation.patch
-
 #CVE-2025-68251
 0044-erofs-avoid-infinite-loops-due-to-corrupted-subpage-.patch
 
-#CVE-2025-68345
-0045-ALSA-hda-cs35l41-Fix-NULL-pointer-dereference-in-cs3.patch
-
 #CVE-2025-68239
 0046-binfmt_misc-restore-write-access-before-closing-file.patch
-
-#CVE-2025-68346
-0047-ALSA-dice-fix-buffer-overflow-in-detect_stream_forma.patch
-
-#CVE-2025-68740
-0048-ima-Handle-error-code-returned-by-ima_filter_rule_ma.patch
-
-#CVE-2025-68347
-0049-ALSA-firewire-motu-fix-buffer-overflow-in-hwdep-read.patch
-
-#CVE-2025-68348
-0050-block-fix-memory-leak-in-__blkdev_issue_zero_pages.patch
-
-#CVE-2025-68741
-0051-scsi-qla2xxx-Fix-improper-freeing-of-purex-item.patch
-
-#CVE-2025-68349
-0052-NFSv4-pNFS-Clear-NFS_INO_LAYOUTCOMMIT-in-pnfs_mark_l.patch
-
-#CVE-2025-68265
-0053-nvme-fix-admin-request_queue-lifetime.patch
 
 #CVE-2025-68353
 0054-net-vxlan-prevent-NULL-deref-in-vxlan_xmit_one.patch
@@ -371,23 +188,8 @@
 #CVE-2025-68359
 0055-btrfs-fix-double-free-of-qgroup-record-after-failure.patch
 
-#CVE-2025-68744
-0056-bpf-Free-special-fields-when-update-lru_-percpu_hash.patch
-
-#CVE-2025-68365
-0057-fs-ntfs3-Initialize-allocated-memory-before-use.patch
-
-#CVE-2025-68364
-0058-ocfs2-relax-BUG-to-ocfs2_error-in-__ocfs2_move_exten.patch
-
 #CVE-2025-68319
 0059-netconsole-Acquire-su_mutex-before-navigating-config.patch
-
-#CVE-2025-68266
-0060-bfs-Reconstruct-file-type-when-loading-from-disk.patch
-
-#CVE-2025-68324
-0061-scsi-imm-Fix-use-after-free-bug-caused-by-unfinished.patch
 
 #CVE-2025-68309
 0062-PCI-AER-Fix-NULL-pointer-access-by-aer_info.patch
@@ -395,4 +197,51 @@
 #CVE-2025-68334
 0063-platform-x86-amd-pmc-Add-support-for-Van-Gogh-SoC.patch
 
+#CVE-2025-40338
+0001-ASoC-Intel-avs-Do-not-share-the-name-pointer-between.patch
 
+#CVE-2025-68768
+0002-inet-frags-flush-pending-skbs-in-fqdir_pre_exit.patch
+
+#CVE-2025-71074
+0003-functionfs-fix-the-open-removal-races.patch
+
+#CVE-2025-71117
+0004-block-Remove-queue-freezing-from-several-sysfs-store.patch
+
+#CVE-2025-71221
+0005-dmaengine-mmp_pdma-Fix-race-condition-in-mmp_pdma_re.patch
+
+#CVE-2026-22993
+0006-idpf-Fix-RSS-LUT-NULL-ptr-issue-after-soft-reset.patch
+
+#CVE-2026-23157
+0007-btrfs-do-not-strictly-require-dirty-metadata-thresho.patch
+
+#CVE-2026-23004
+0008-dst-fix-races-in-rt6_uncached_list_del-and-rt_del_un.patch
+
+#CVE-2026-23066
+0009-rxrpc-Fix-recvmsg-unconditional-requeue.patch
+
+#CVE-2026-23104
+0010-ice-fix-devlink-reload-call-trace.patch
+
+#CVE-2026-23137
+0011-cleanup-Provide-retain_and_null_ptr.patch
+0012-of-unittest-Fix-memory-leak-in-unittest_data_add.patch
+
+#CVE-2026-23138
+0013-tracing-Add-recursion-protection-in-kernel-stack-tra.patch
+
+#CVE-2026-23171
+0014-bonding-fix-use-after-free-due-to-enslave-fail-after.patch
+
+#CVE-2026-23210
+0015-ice-Fix-PTP-NULL-pointer-dereference-during-VSI-rebu.patch
+
+#CVE-2026-23226
+0016-ksmbd-add-chann_lock-to-protect-ksmbd_chann_list-xar.patch
+
+#CVE-2025-71152
+0017-net-dsa-properly-keep-track-of-conduit-reference.patch
