@@ -43,4 +43,12 @@
 #CVE-2026-23459
 0009-ip_tunnel-adapt-iptunnel_xmit_stats-to-NETDEV_PCPU_S.patch
 
+#CVE-2026-31406
+0001-xfrm-Fix-work-re-schedule-after-cancel-in-xfrm_nat_k.patch
+
+#CVE-2026-31407
+0002-netfilter-conntrack-add-missing-netlink-policy-valid.patch
+
+#CVE-2026-31408
+0003-Bluetooth-SCO-Fix-use-after-free-in-sco_recv_frame-d.patch
 
