@@ -56,6 +56,7 @@
 #include "autogroup.h"
 
 #include <trace/hooks/sched.h>
+#include <trace/hooks/dtask.h>
 
 EXPORT_TRACEPOINT_SYMBOL_GPL(sched_stat_runtime);
 
@@ -1277,6 +1278,7 @@ static void update_curr(struct cfs_rq *cfs_rq)
 	struct rq *rq = rq_of(cfs_rq);
 	s64 delta_exec;
 	bool resched;
+	bool skip_preempt = false;
 
 	if (unlikely(!curr))
 		return;
@@ -1310,6 +1312,11 @@ static void update_curr(struct cfs_rq *cfs_rq)
 		return;
 
 	if (resched || !protect_slice(curr)) {
+		trace_android_vh_resched_curr_lazy(rq_of(cfs_rq), &skip_preempt);
+
+		if (skip_preempt)
+			return;
+
 		resched_curr(rq);
 		clear_buddies(cfs_rq, curr);
 	}
@@ -5728,11 +5735,17 @@ entity_tick(struct cfs_rq *cfs_rq, struct sched_entity *curr, int queued)
 	update_cfs_group(curr);
 
 #ifdef CONFIG_SCHED_HRTICK
+	bool skip_preempt = false;
 	/*
 	 * queued ticks are scheduled to match the slice, so don't bother
 	 * validating it and just reschedule.
 	 */
 	if (queued) {
+		trace_android_vh_resched_curr_lazy(rq_of(cfs_rq), &skip_preempt);
+
+		if (skip_preempt)
+			return;
+
 		resched_curr(rq_of(cfs_rq));
 		return;
 	}
@@ -8992,6 +9005,11 @@ preempt:
 	if (do_preempt_short)
 		cancel_protect_slice(se);
 
+	trace_android_vh_resched_curr_lazy(rq_of(cfs_rq), &ignore);
+
+	if (ignore)
+		return;
+
 	resched_curr(rq);
 }
 
@@ -9108,12 +9126,6 @@ idle:
 		if (new_tasks > 0)
 			goto again;
 	}
-
-	/*
-	 * rq is about to be idle, check if we need to update the
-	 * lost_idle_time of clock_pelt
-	 */
-	update_idle_rq_clock_pelt(rq);
 
 	return NULL;
 }
@@ -11853,7 +11865,7 @@ static int need_active_balance(struct lb_env *env)
 	return 0;
 }
 
-static int active_load_balance_cpu_stop(void *data);
+int active_load_balance_cpu_stop(void *data);
 
 static int should_we_balance(struct lb_env *env)
 {
@@ -12244,7 +12256,7 @@ update_next_balance(struct sched_domain *sd, unsigned long *next_balance)
  * least 1 task to be running on each physical CPU where possible, and
  * avoids physical / logical imbalances.
  */
-static int active_load_balance_cpu_stop(void *data)
+int active_load_balance_cpu_stop(void *data)
 {
 	struct rq *busiest_rq = data;
 	int busiest_cpu = cpu_of(busiest_rq);
@@ -12322,6 +12334,7 @@ out_unlock:
 
 	return 0;
 }
+EXPORT_SYMBOL_GPL(active_load_balance_cpu_stop);
 
 /*
  * This flag serializes load-balancing passes over large domains
@@ -12349,22 +12362,25 @@ void update_max_interval(void)
 
 static inline bool update_newidle_cost(struct sched_domain *sd, u64 cost)
 {
+	unsigned long next_decay = sd->last_decay_max_lb_cost + HZ;
+	unsigned long now = jiffies;
+
 	if (cost > sd->max_newidle_lb_cost) {
 		/*
 		 * Track max cost of a domain to make sure to not delay the
 		 * next wakeup on the CPU.
 		 */
 		sd->max_newidle_lb_cost = cost;
-		sd->last_decay_max_lb_cost = jiffies;
-	} else if (time_after(jiffies, sd->last_decay_max_lb_cost + HZ)) {
+		sd->last_decay_max_lb_cost = now;
+
+	} else if (time_after(now, next_decay)) {
 		/*
 		 * Decay the newidle max times by ~1% per second to ensure that
 		 * it is not outdated and the current max cost is actually
 		 * shorter.
 		 */
 		sd->max_newidle_lb_cost = (sd->max_newidle_lb_cost * 253) / 256;
-		sd->last_decay_max_lb_cost = jiffies;
-
+		sd->last_decay_max_lb_cost = now;
 		return true;
 	}
 
@@ -13044,14 +13060,16 @@ static int sched_balance_newidle(struct rq *this_rq, struct rq_flags *rf)
 
 	rcu_read_lock();
 	sd = rcu_dereference_check_sched_domain(this_rq->sd);
+	if (!sd) {
+		rcu_read_unlock();
+		goto out;
+	}
 
 	if (!get_rd_overloaded(this_rq->rd) ||
-	    (sd && this_rq->avg_idle < sd->max_newidle_lb_cost)) {
+	    this_rq->avg_idle < sd->max_newidle_lb_cost) {
 
-		if (sd)
-			update_next_balance(sd, &next_balance);
+		update_next_balance(sd, &next_balance);
 		rcu_read_unlock();
-
 		goto out;
 	}
 	rcu_read_unlock();

@@ -1054,9 +1054,18 @@ static struct scx_dispatch_q *find_global_dsq(struct task_struct *p)
 	return global_dsqs[cpu_to_node(task_cpu(p))];
 }
 
-static struct scx_dispatch_q *find_user_dsq(u64 dsq_id)
+struct scx_dispatch_q *find_user_dsq(u64 dsq_id)
 {
 	return rhashtable_lookup_fast(&dsq_hash, &dsq_id, dsq_hash_params);
+}
+EXPORT_SYMBOL_GPL(find_user_dsq);
+
+static const struct sched_class *scx_setscheduler_class(struct task_struct *p)
+{
+	if (p->sched_class == &stop_sched_class)
+		return &stop_sched_class;
+
+	return __setscheduler_class(p->policy, p->prio);
 }
 
 /*
@@ -1670,10 +1679,36 @@ static void dsq_mod_nr(struct scx_dispatch_q *dsq, s32 delta)
 	WRITE_ONCE(dsq->nr, dsq->nr + delta);
 }
 
+static void local_dsq_post_enq(struct scx_dispatch_q *dsq, struct task_struct *p,
+			       u64 enq_flags)
+{
+	struct rq *rq = container_of(dsq, struct rq, scx.local_dsq);
+	bool preempt = false;
+
+	/*
+	 * If @rq is in balance, the CPU is already vacant and looking for the
+	 * next task to run. No need to preempt or trigger resched after moving
+	 * @p into its local DSQ.
+	 */
+	if (rq->scx.flags & SCX_RQ_IN_BALANCE)
+		return;
+
+	if ((enq_flags & SCX_ENQ_PREEMPT) && p != rq->curr &&
+	    rq->curr->sched_class == &ext_sched_class) {
+		rq->curr->scx.slice = 0;
+		preempt = true;
+	}
+
+	if (preempt || sched_class_above(&ext_sched_class, rq->curr->sched_class))
+		resched_curr(rq);
+}
+
 static void dispatch_enqueue(struct scx_dispatch_q *dsq, struct task_struct *p,
 			     u64 enq_flags)
 {
 	bool is_local = dsq->id == SCX_DSQ_LOCAL;
+	bool enq_priq = false;
+	struct rq *rq = task_rq(p);
 
 	WARN_ON_ONCE(p->scx.dsq || !list_empty(&p->scx.dsq_list.node));
 	WARN_ON_ONCE((p->scx.dsq_flags & SCX_TASK_DSQ_ON_PRIQ) ||
@@ -1703,7 +1738,8 @@ static void dispatch_enqueue(struct scx_dispatch_q *dsq, struct task_struct *p,
 		enq_flags &= ~SCX_ENQ_DSQ_PRIQ;
 	}
 
-	if (enq_flags & SCX_ENQ_DSQ_PRIQ) {
+	trace_android_vh_enq_to_priq(rq, dsq, p, &enq_priq);
+	if ((enq_flags & SCX_ENQ_DSQ_PRIQ) || enq_priq) {
 		struct rb_node *rbp;
 
 		/*
@@ -1767,22 +1803,10 @@ static void dispatch_enqueue(struct scx_dispatch_q *dsq, struct task_struct *p,
 	if (enq_flags & SCX_ENQ_CLEAR_OPSS)
 		atomic_long_set_release(&p->scx.ops_state, SCX_OPSS_NONE);
 
-	if (is_local) {
-		struct rq *rq = container_of(dsq, struct rq, scx.local_dsq);
-		bool preempt = false;
-
-		if ((enq_flags & SCX_ENQ_PREEMPT) && p != rq->curr &&
-		    rq->curr->sched_class == &ext_sched_class) {
-			rq->curr->scx.slice = 0;
-			preempt = true;
-		}
-
-		if (preempt || sched_class_above(&ext_sched_class,
-						 rq->curr->sched_class))
-			resched_curr(rq);
-	} else {
+	if (is_local)
+		local_dsq_post_enq(dsq, p, enq_flags);
+	else
 		raw_spin_unlock(&dsq->lock);
-	}
 }
 
 static void task_unlink_from_dsq(struct task_struct *p,
@@ -2258,6 +2282,8 @@ static void move_local_task_to_local_dsq(struct task_struct *p, u64 enq_flags,
 
 	dsq_mod_nr(dst_dsq, 1);
 	p->scx.dsq = dst_dsq;
+
+	local_dsq_post_enq(dst_dsq, p, enq_flags);
 }
 
 #ifdef CONFIG_SMP
@@ -2499,6 +2525,7 @@ static struct rq *move_task_between_dsqs(struct task_struct *p, u64 enq_flags,
 static bool consume_dispatch_q(struct rq *rq, struct scx_dispatch_q *dsq)
 {
 	struct task_struct *p;
+	bool disallow = false;
 retry:
 	/*
 	 * The caller can't expect to successfully consume a task if the task's
@@ -2512,6 +2539,9 @@ retry:
 
 	nldsq_for_each_task(p, dsq) {
 		struct rq *task_rq = task_rq(p);
+		trace_android_vh_scx_task_can_run_on(&disallow, p, rq);
+		if (disallow)
+			continue;
 
 		if (rq == task_rq) {
 			task_unlink_from_dsq(p, dsq);
@@ -4613,6 +4643,7 @@ static void scx_ops_disable_workfn(struct kthread_work *work)
 	struct rhashtable_iter rht_iter;
 	struct scx_dispatch_q *dsq;
 	int i, kind;
+	int repeat = 0;
 
 	kind = atomic_read(&scx_exit_kind);
 	while (true) {
@@ -4673,12 +4704,17 @@ static void scx_ops_disable_workfn(struct kthread_work *work)
 
 	scx_ops_init_task_enabled = false;
 
+repeat_iter:
 	scx_task_iter_start(&sti);
 	while ((p = scx_task_iter_next_locked(&sti))) {
 		const struct sched_class *old_class = p->sched_class;
-		const struct sched_class *new_class =
-			__setscheduler_class(p->policy, p->prio);
+		const struct sched_class *new_class = scx_setscheduler_class(p);
 		struct sched_enq_and_set_ctx ctx;
+		bool skip = false;
+
+		trace_android_vh_scx_switch_repeat_skip(p, &skip, &repeat);
+		if (skip)
+			continue;
 
 		trace_android_vh_setscheduler_class(&new_class, NULL, p, p->policy, p->prio);
 		if (old_class != new_class && p->se.sched_delayed)
@@ -4696,6 +4732,10 @@ static void scx_ops_disable_workfn(struct kthread_work *work)
 		scx_ops_exit_task(p);
 	}
 	scx_task_iter_stop(&sti);
+	if (repeat > 0) {
+		repeat++;
+		goto repeat_iter;
+	}
 	percpu_up_write(&scx_fork_rwsem);
 
 	/* no task is on scx, turn off all the switches and flush in-progress calls */
@@ -4781,14 +4821,29 @@ static void schedule_scx_ops_disable_work(void)
 		kthread_queue_work(helper, &scx_ops_disable_work);
 }
 
-static void scx_ops_disable(enum scx_exit_kind kind)
+/*
+ * Claim the exit. The caller must ensure that the helper kthread work
+ * is kicked before the current task can be preempted. Once exit_kind is
+ * claimed, scx_error() can no longer trigger, so if the current task gets
+ * preempted and the BPF scheduler fails to schedule it back, the helper work
+ * will never be kicked and the whole system can wedge.
+ */
+static bool scx_claim_exit(enum scx_exit_kind kind)
 {
 	int none = SCX_EXIT_NONE;
 
+	lockdep_assert_preemption_disabled();
+
+	return atomic_try_cmpxchg(&scx_exit_kind, &none, kind);
+}
+
+static void scx_ops_disable(enum scx_exit_kind kind)
+{
 	if (WARN_ON_ONCE(kind == SCX_EXIT_NONE || kind == SCX_EXIT_DONE))
 		kind = SCX_EXIT_ERROR;
 
-	atomic_try_cmpxchg(&scx_exit_kind, &none, kind);
+	guard(preempt)();
+	scx_claim_exit(kind);
 
 	schedule_scx_ops_disable_work();
 }
@@ -5078,6 +5133,7 @@ static void scx_ops_error_irq_workfn(struct irq_work *irq_work)
 	if (ei->kind >= SCX_EXIT_ERROR)
 		scx_dump_state(ei, scx_ops.exit_dump_len);
 
+	trace_android_vh_scx_exit_on_abnormal(ei);
 	schedule_scx_ops_disable_work();
 }
 
@@ -5088,10 +5144,11 @@ static __printf(3, 4) void scx_ops_exit_kind(enum scx_exit_kind kind,
 					     const char *fmt, ...)
 {
 	struct scx_exit_info *ei = scx_exit_info;
-	int none = SCX_EXIT_NONE;
 	va_list args;
 
-	if (!atomic_try_cmpxchg(&scx_exit_kind, &none, kind))
+	guard(preempt)();
+
+	if (!scx_claim_exit(kind))
 		return;
 
 	ei->exit_code = exit_code;
@@ -5156,18 +5213,29 @@ static int validate_ops(const struct sched_ext_ops *ops)
 	return 0;
 }
 
-static int scx_ops_enable(struct sched_ext_ops *ops, struct bpf_link *link)
+/*
+ * scx_ops_enable() is offloaded to a dedicated system-wide RT kthread to avoid
+ * starvation. During the READY -> ENABLED task switching loop, the calling
+ * thread's sched_class gets switched from fair to ext. As fair has higher
+ * priority than ext, the calling thread can be indefinitely starved under
+ * fair-class saturation, leading to a system hang.
+ */
+struct scx_enable_cmd {
+	struct kthread_work	work;
+	struct sched_ext_ops	*ops;
+	int			ret;
+};
+
+static void scx_ops_enable_workfn(struct kthread_work *work)
 {
+	struct scx_enable_cmd *cmd =
+		container_of(work, struct scx_enable_cmd, work);
+	struct sched_ext_ops *ops = cmd->ops;
 	struct scx_task_iter sti;
 	struct task_struct *p;
 	unsigned long timeout;
 	int i, cpu, node, ret;
-
-	if (!cpumask_equal(housekeeping_cpumask(HK_TYPE_DOMAIN),
-			   cpu_possible_mask)) {
-		pr_err("sched_ext: Not compatible with \"isolcpus=\" domain isolation\n");
-		return -EINVAL;
-	}
+	int repeat = 0;
 
 	mutex_lock(&scx_ops_enable_mutex);
 
@@ -5394,17 +5462,22 @@ static int scx_ops_enable(struct sched_ext_ops *ops, struct bpf_link *link)
 	 * scx_tasks_lock.
 	 */
 	percpu_down_write(&scx_fork_rwsem);
+
+repeat_iter:
 	scx_task_iter_start(&sti);
 	while ((p = scx_task_iter_next_locked(&sti))) {
 		const struct sched_class *old_class = p->sched_class;
-		const struct sched_class *new_class =
-			__setscheduler_class(p->policy, p->prio);
+		const struct sched_class *new_class = scx_setscheduler_class(p);
 		struct sched_enq_and_set_ctx ctx;
+		bool skip = false;
 
 		trace_android_vh_setscheduler_class(&new_class, NULL, p, p->policy, p->prio);
-		if (!tryget_task_struct(p))
+		if (scx_get_task_state(p) != SCX_TASK_READY)
 			continue;
 
+		trace_android_vh_scx_switch_repeat_skip(p, &skip, &repeat);
+		if (skip)
+			continue;
 		if (old_class != new_class && p->se.sched_delayed)
 			dequeue_task(task_rq(p), p, DEQUEUE_SLEEP | DEQUEUE_DELAYED);
 
@@ -5418,9 +5491,12 @@ static int scx_ops_enable(struct sched_ext_ops *ops, struct bpf_link *link)
 		sched_enq_and_set_task(&ctx);
 
 		check_class_changed(task_rq(p), p, old_class, p->prio);
-		put_task_struct(p);
 	}
 	scx_task_iter_stop(&sti);
+	if (repeat > 0) {
+		repeat++;
+		goto repeat_iter;
+	}
 	percpu_up_write(&scx_fork_rwsem);
 
 	scx_ops_bypass(false);
@@ -5442,7 +5518,8 @@ static int scx_ops_enable(struct sched_ext_ops *ops, struct bpf_link *link)
 	atomic_long_inc(&scx_enable_seq);
 
 	add_taint(TAINT_AUX, LOCKDEP_STILL_OK);
-	return 0;
+	cmd->ret = 0;
+	return;
 
 err_del:
 	kobject_del(scx_root_kobj);
@@ -5455,7 +5532,8 @@ err:
 	}
 err_unlock:
 	mutex_unlock(&scx_ops_enable_mutex);
-	return ret;
+	cmd->ret = ret;
+	return;
 
 err_disable_unlock_all:
 	scx_cgroup_unlock();
@@ -5474,7 +5552,39 @@ err_disable:
 	 */
 	scx_ops_error("scx_ops_enable() failed (%d)", ret);
 	kthread_flush_work(&scx_ops_disable_work);
-	return 0;
+	cmd->ret = 0;
+}
+
+static int scx_ops_enable(struct sched_ext_ops *ops, struct bpf_link *link)
+{
+	static struct kthread_worker *helper;
+	static DEFINE_MUTEX(helper_mutex);
+	struct scx_enable_cmd cmd;
+
+	if (!cpumask_equal(housekeeping_cpumask(HK_TYPE_DOMAIN),
+			   cpu_possible_mask)) {
+		pr_err("sched_ext: Not compatible with \"isolcpus=\" domain isolation\n");
+		return -EINVAL;
+	}
+
+	if (!READ_ONCE(helper)) {
+		mutex_lock(&helper_mutex);
+		if (!helper) {
+			helper = scx_create_rt_helper("scx_ops_enable_helper");
+			if (!helper) {
+				mutex_unlock(&helper_mutex);
+				return -ENOMEM;
+			}
+		}
+		mutex_unlock(&helper_mutex);
+	}
+
+	kthread_init_work(&cmd.work, scx_ops_enable_workfn);
+	cmd.ops = ops;
+
+	kthread_queue_work(READ_ONCE(helper), &cmd.work);
+	kthread_flush_work(&cmd.work);
+	return cmd.ret;
 }
 
 
@@ -6057,7 +6167,7 @@ void __init init_sched_ext_class(void)
 		BUG_ON(!zalloc_cpumask_var(&rq->scx.cpus_to_kick_if_idle, GFP_KERNEL));
 		BUG_ON(!zalloc_cpumask_var(&rq->scx.cpus_to_preempt, GFP_KERNEL));
 		BUG_ON(!zalloc_cpumask_var(&rq->scx.cpus_to_wait, GFP_KERNEL));
-		init_irq_work(&rq->scx.deferred_irq_work, deferred_irq_workfn);
+		rq->scx.deferred_irq_work = IRQ_WORK_INIT_HARD(deferred_irq_workfn);
 		init_irq_work(&rq->scx.kick_cpus_irq_work, kick_cpus_irq_workfn);
 
 		if (cpu_online(cpu))

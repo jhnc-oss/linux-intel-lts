@@ -603,6 +603,7 @@
   devm_request_threaded_irq
   __devm_reset_control_get
   devm_reset_controller_register
+  devm_rproc_add
   devm_rtc_allocate_device
   devm_rtc_nvmem_register
   __devm_rtc_register_device
@@ -1100,6 +1101,7 @@
   generic_file_llseek
   generic_handle_domain_irq
   generic_handle_irq
+  generic_handle_irq_safe
   generic_hwtstamp_get_lower
   generic_hwtstamp_set_lower
   generic_write_checks
@@ -1309,6 +1311,7 @@
   iio_push_to_buffers
   iio_read_channel_attribute
   iio_read_channel_processed
+  iio_read_channel_processed_scale
   iio_read_channel_raw
   iio_trigger_notify_done
   import_iovec
@@ -2467,6 +2470,7 @@
   rproc_alloc
   rproc_boot
   rproc_del
+  rproc_detach
   rproc_free
   rproc_get_by_phandle
   rproc_put
@@ -2787,6 +2791,7 @@
   sock_common_getsockopt
   sock_common_recvmsg
   sock_common_setsockopt
+  sock_copy_user_timeval
   __sock_create
   sock_create_kern
   sock_diag_register
@@ -2794,6 +2799,7 @@
   sock_diag_unregister
   sock_efree
   sockfd_lookup
+  sock_get_timeout
   sock_gettstamp
   sock_i_ino
   sock_init_data
@@ -3305,6 +3311,9 @@
   tty_vhangup
   tty_wakeup
   tty_write_room
+  tun_get_socket
+  tun_get_tx_ring
+  tun_ptr_free
   typec_get_drvdata
   typec_mux_get_drvdata
   typec_mux_put
@@ -3314,6 +3323,7 @@
   typec_partner_set_identity
   typec_partner_set_pd_revision
   typec_partner_set_svdm_version
+  typec_port_register_altmodes
   typec_register_partner
   typec_register_port
   typec_set_data_role
@@ -3778,8 +3788,13 @@
   vring_transport_features
   vscnprintf
   vsnprintf
+  vsock_addr_equals_addr
+  vsock_addr_init
+  vsock_addr_cast
+  vsock_addr_bound
   vsock_core_register
   vsock_core_unregister
+  vsock_deliver_tap
   vsock_for_each_connected_socket
   vsprintf
   vsscanf

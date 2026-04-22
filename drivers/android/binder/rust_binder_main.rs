@@ -84,12 +84,19 @@ module! {
 }
 
 use kernel::bindings::rust_binder_layout;
-#[no_mangle]
-static RUST_BINDER_LAYOUT: rust_binder_layout = rust_binder_layout {
+const RUST_BINDER_LAYOUT: rust_binder_layout = rust_binder_layout {
     t: transaction::TRANSACTION_LAYOUT,
     th: thread::THREAD_LAYOUT,
     p: process::PROCESS_LAYOUT,
     n: node::NODE_LAYOUT,
+    __kabi_reserved_backport0: 0,
+    __kabi_reserved_backport1: 0,
+    __kabi_reserved_backport2: 0,
+    __kabi_reserved_backport3: 0,
+    __kabi_reserved_backport4: 0,
+    __kabi_reserved_backport5: 0,
+    __kabi_reserved_backport6: 0,
+    __kabi_reserved_backport7: 0,
 };
 
 fn next_debug_id() -> usize {
@@ -294,11 +301,16 @@ static BINDER_SHRINKER: Shrinker = unsafe { Shrinker::new() };
 struct BinderModule {}
 
 impl kernel::Module for BinderModule {
-    fn init(module: &'static kernel::ThisModule) -> Result<Self> {
+    fn init(_module: &'static kernel::ThisModule) -> Result<Self> {
         // SAFETY: The module initializer never runs twice, so we only call this once.
         unsafe { crate::context::CONTEXTS.init() };
 
+        // SAFETY: Nobody will access this except through tracepoints triggered by this driver, so
+        // currently safe to write.
+        unsafe { bindings::RUST_BINDER_LAYOUT = RUST_BINDER_LAYOUT };
+
         // SAFETY: This just accesses global booleans.
+        #[cfg(CONFIG_ANDROID_BINDER_IPC)]
         unsafe {
             #[allow(improper_ctypes)]
             extern "C" {
@@ -308,12 +320,14 @@ impl kernel::Module for BinderModule {
             }
 
             if binder_use_rust == 0 {
-                binder_remove_trace_events(module.as_ptr());
+                #[cfg(CONFIG_EVENT_TRACING)]
+                binder_remove_trace_events(_module.as_ptr());
                 return Ok(Self {});
             }
             if unload_binder() != 0 {
                 pr_err!("Failed to unload C Binder.");
-                binder_remove_trace_events(module.as_ptr());
+                #[cfg(CONFIG_EVENT_TRACING)]
+                binder_remove_trace_events(_module.as_ptr());
                 return Ok(Self {});
             }
         }

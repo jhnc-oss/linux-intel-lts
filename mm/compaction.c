@@ -93,6 +93,7 @@ static inline bool is_via_compact_memory(int order) { return false; }
 static struct page *mark_allocated_noprof(struct page *page, unsigned int order, gfp_t gfp_flags)
 {
 	post_alloc_hook(page, order, __GFP_MOVABLE);
+	set_page_refcounted(page);
 	return page;
 }
 #define mark_allocated(...)	alloc_hooks(mark_allocated_noprof(__VA_ARGS__))
@@ -1896,6 +1897,7 @@ again:
 	dst = (struct folio *)freepage;
 
 	post_alloc_hook(&dst->page, order, __GFP_MOVABLE);
+	set_page_refcounted(&dst->page);
 	if (order)
 		prep_compound_page(&dst->page, order);
 	cc->nr_freepages -= 1 << order;
@@ -2302,6 +2304,7 @@ static enum compact_result __compact_finished(struct compact_control *cc)
 	const int migratetype = cc->migratetype;
 	int ret;
 	bool abort_compact = false;
+	bool bypass = false;
 
 	/* Compaction run completes if the migrate and free scanner meet */
 	if (compact_scanners_met(cc)) {
@@ -2341,6 +2344,10 @@ static enum compact_result __compact_finished(struct compact_control *cc)
 
 		goto out;
 	}
+
+	trace_android_vh_compact_bypass(cc, &bypass);
+	if (bypass)
+		return COMPACT_SUCCESS;
 
 	if (is_via_compact_memory(cc->order))
 		return COMPACT_CONTINUE;
