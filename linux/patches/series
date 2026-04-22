@@ -20,4 +20,5 @@
 #CVE-2026-31407
 0002-netfilter-conntrack-add-missing-netlink-policy-valid.patch
 
-
+#CVE-2026-31420
+0001-bridge-mrp-reject-zero-test-interval-to-avoid-OOM-pa.patch
