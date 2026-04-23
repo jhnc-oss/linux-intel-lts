@@ -1,14 +1,6 @@
-#CVE-2025-39764
-0002-netfilter-ctnetlink-remove-refcounting-in-expectatio.patch
 
 #CVE-2025-39677
 0003-net-sched-Fix-backlog-accounting-in-qdisc_dequeue_in.patch
-
-#CVE-2025-38643
-0004-wifi-cfg80211-Add-missing-lock-in-cfg80211_check_and.patch
-
-#CVE-2025-38627
-0005-f2fs-compress-fix-UAF-of-f2fs_inode_info-in-f2fs_fre.patch
 
 #CVE-2025-38621
 0006-md-make-rdev_addable-usable-for-rcu-mode.patch
@@ -19,18 +11,11 @@
 #CVE-2025-37880
 0008-um-work-around-sched_yield-not-yielding-in-time-trav.patch
 
-#CVE-2025-22121
-0009-ext4-introduce-ITAIL-helper.patch
-0010-ext4-fix-out-of-bound-read-in-ext4_xattr_inode_dec_r.patch
-
 #CVE-2025-22116
 0011-idpf-check-error-for-register_netdev-on-init.patch
 
 #CVE-2025-22104
 0012-ibmvnic-Use-kernel-helpers-for-hex-dumps.patch
-
-#CVE-2025-21709
-0014-kernel-be-more-careful-about-dup_mmap-failures-and-u.patch
 
 #CVE-2025-39816
 0017-io_uring-kbuf-always-use-READ_ONCE-to-read-ring-prov.patch
