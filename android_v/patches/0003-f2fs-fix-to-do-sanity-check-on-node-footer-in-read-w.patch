@@ -1,0 +1,185 @@
+From b1b5e4c315358b34f0fb2f1411f96dd0d3319e00 Mon Sep 17 00:00:00 2001
+From: Chao Yu <chao@kernel.org>
+Date: Mon, 12 Jan 2026 15:49:16 +0800
+Subject: [PATCH 03/40] f2fs: fix to do sanity check on node footer in
+ {read,write}_end_io
+
+-----------[ cut here ]------------
+kernel BUG at fs/f2fs/data.c:358!
+Call Trace:
+ <IRQ>
+ blk_update_request+0x5eb/0xe70 block/blk-mq.c:987
+ blk_mq_end_request+0x3e/0x70 block/blk-mq.c:1149
+ blk_complete_reqs block/blk-mq.c:1224 [inline]
+ blk_done_softirq+0x107/0x160 block/blk-mq.c:1229
+ handle_softirqs+0x283/0x870 kernel/softirq.c:579
+ __do_softirq kernel/softirq.c:613 [inline]
+ invoke_softirq kernel/softirq.c:453 [inline]
+ __irq_exit_rcu+0xca/0x1f0 kernel/softirq.c:680
+ irq_exit_rcu+0x9/0x30 kernel/softirq.c:696
+ instr_sysvec_apic_timer_interrupt arch/x86/kernel/apic/apic.c:1050 [inline]
+ sysvec_apic_timer_interrupt+0xa6/0xc0 arch/x86/kernel/apic/apic.c:1050
+ </IRQ>
+
+In f2fs_write_end_io(), it detects there is inconsistency in between
+node page index (nid) and footer.nid of node page.
+
+If footer of node page is corrupted in fuzzed image, then we load corrupted
+node page w/ async method, e.g. f2fs_ra_node_pages() or f2fs_ra_node_page(),
+in where we won't do sanity check on node footer, once node page becomes
+dirty, we will encounter this bug after node page writeback.
+
+Cc: stable@kernel.org
+Reported-by: syzbot+803dd716c4310d16ff3a@syzkaller.appspotmail.com
+Closes: https://syzkaller.appspot.com/bug?extid=803dd716c4310d16ff3a
+Signed-off-by: Chao Yu <chao@kernel.org>
+Signed-off-by: Jaegeuk Kim <jaegeuk@kernel.org>
+(cherry picked from commit 50ac3ecd8e05b6bcc350c71a4307d40c030ec7e4)
+---
+ fs/f2fs/data.c | 13 +++++++++++--
+ fs/f2fs/f2fs.h | 11 +++++++++++
+ fs/f2fs/node.c | 31 ++++++++++++++++++-------------
+ fs/f2fs/node.h |  7 -------
+ 4 files changed, 40 insertions(+), 22 deletions(-)
+
+diff --git a/fs/f2fs/data.c b/fs/f2fs/data.c
+index 4f28bd0bbaea4..59b9eb26cab85 100644
+--- a/fs/f2fs/data.c
++++ b/fs/f2fs/data.c
+@@ -178,6 +178,12 @@ static void f2fs_finish_read_bio(struct bio *bio, bool in_task)
+ 		while (nr_pages--)
+ 			dec_page_count(F2FS_F_SB(folio), __read_io_type(folio));
+ 
++		if (F2FS_F_SB(folio)->node_inode &&
++		    folio->mapping == NODE_MAPPING(F2FS_F_SB(folio)) &&
++		    f2fs_sanity_check_node_footer(F2FS_F_SB(folio),
++				folio, folio->index, NODE_TYPE_REGULAR, true))
++			bio->bi_status = BLK_STS_IOERR;
++
+ 		if (finished)
+ 			folio_end_read(folio, bio->bi_status == 0);
+ 	}
+@@ -382,8 +388,11 @@ static void f2fs_write_end_io(struct bio *bio)
+ 						STOP_CP_REASON_WRITE_FAIL);
+ 		}
+ 
+-		f2fs_bug_on(sbi, folio->mapping == NODE_MAPPING(sbi) &&
+-				folio->index != nid_of_node(&folio->page));
++		if (folio->mapping == NODE_MAPPING(sbi)) {
++			f2fs_sanity_check_node_footer(sbi, folio,
++				folio->index, NODE_TYPE_REGULAR, true);
++			f2fs_bug_on(sbi, folio->index != nid_of_node(&folio->page));
++		}
+ 
+ 		dec_page_count(sbi, type);
+ 
+diff --git a/fs/f2fs/f2fs.h b/fs/f2fs/f2fs.h
+index fb389a89ce9c8..20586119c692c 100644
+--- a/fs/f2fs/f2fs.h
++++ b/fs/f2fs/f2fs.h
+@@ -1490,6 +1490,14 @@ enum {
+ 	TOTAL_CALL = FOREGROUND,
+ };
+ 
++/* For node type in __get_node_folio() */
++enum node_type {
++	NODE_TYPE_REGULAR,
++	NODE_TYPE_INODE,
++	NODE_TYPE_XATTR,
++	NODE_TYPE_NON_INODE,
++};
++
+ /* a threshold of maximum elapsed time in critical region to print tracepoint */
+ #define MAX_LOCK_ELAPSED_TIME		500
+ 
+@@ -3831,6 +3839,9 @@ struct page *f2fs_new_inode_page(struct inode *inode);
+ struct page *f2fs_new_node_page(struct dnode_of_data *dn, unsigned int ofs);
+ void f2fs_ra_node_page(struct f2fs_sb_info *sbi, nid_t nid);
+ struct page *f2fs_get_node_page(struct f2fs_sb_info *sbi, pgoff_t nid);
++int f2fs_sanity_check_node_footer(struct f2fs_sb_info *sbi,
++					struct folio *folio, pgoff_t nid,
++					enum node_type ntype, bool in_irq);
+ struct folio *f2fs_get_inode_folio(struct f2fs_sb_info *sbi, pgoff_t ino);
+ struct page *f2fs_get_inode_page(struct f2fs_sb_info *sbi, pgoff_t ino);
+ struct page *f2fs_get_xnode_page(struct f2fs_sb_info *sbi, pgoff_t xnid);
+diff --git a/fs/f2fs/node.c b/fs/f2fs/node.c
+index 046979f6ab727..203a9653900d2 100644
+--- a/fs/f2fs/node.c
++++ b/fs/f2fs/node.c
+@@ -1471,21 +1471,21 @@ void f2fs_ra_node_page(struct f2fs_sb_info *sbi, nid_t nid)
+ 	f2fs_put_page(apage, err ? 1 : 0);
+ }
+ 
+-static int sanity_check_node_footer(struct f2fs_sb_info *sbi,
+-					struct page *page, pgoff_t nid,
+-					enum node_type ntype)
++int f2fs_sanity_check_node_footer(struct f2fs_sb_info *sbi,
++					struct folio *folio, pgoff_t nid,
++					enum node_type ntype, bool in_irq)
+ {
+-	if (unlikely(nid != nid_of_node(page) ||
+-		(ntype == NODE_TYPE_INODE && !IS_INODE(page)) ||
++	if (unlikely(nid != nid_of_node(&folio->page) ||
++		(ntype == NODE_TYPE_INODE && !IS_INODE(&folio->page)) ||
+ 		(ntype == NODE_TYPE_XATTR &&
+-		!f2fs_has_xattr_block(ofs_of_node(page))) ||
++		!f2fs_has_xattr_block(ofs_of_node(&folio->page))) ||
+ 		time_to_inject(sbi, FAULT_INCONSISTENT_FOOTER))) {
+-		f2fs_warn(sbi, "inconsistent node block, node_type:%d, nid:%lu, "
+-			  "node_footer[nid:%u,ino:%u,ofs:%u,cpver:%llu,blkaddr:%u]",
+-			  ntype, nid, nid_of_node(page), ino_of_node(page),
+-			  ofs_of_node(page), cpver_of_node(page),
+-			  next_blkaddr_of_node(page));
+ 		set_sbi_flag(sbi, SBI_NEED_FSCK);
++		f2fs_warn_ratelimited(sbi, "inconsistent node block, node_type:%d, nid:%lu, "
++			  "node_footer[nid:%u,ino:%u,ofs:%u,cpver:%llu,blkaddr:%u]",
++			  ntype, nid, nid_of_node(&folio->page), ino_of_node(&folio->page),
++			  ofs_of_node(&folio->page), cpver_of_node(&folio->page),
++			  next_blkaddr_of_node(&folio->page));
+ 		f2fs_handle_error(sbi, ERROR_INCONSISTENT_FOOTER);
+ 		return -EFSCORRUPTED;
+ 	}
+@@ -1534,7 +1534,7 @@ static struct folio *__get_node_folio(struct f2fs_sb_info *sbi, pgoff_t nid,
+ 		goto out_err;
+ 	}
+ page_hit:
+-	err = sanity_check_node_footer(sbi, &folio->page, nid, ntype);
++	err = f2fs_sanity_check_node_footer(sbi, folio, nid, ntype, false);
+ 	if (!err)
+ 		return folio;
+ out_err:
+@@ -1723,7 +1723,12 @@ static int __write_node_page(struct page *page, bool atomic, bool *submitted,
+ 
+ 	/* get old block addr of this node page */
+ 	nid = nid_of_node(page);
+-	f2fs_bug_on(sbi, folio->index != nid);
++
++	if (f2fs_sanity_check_node_footer(sbi, folio, nid,
++					NODE_TYPE_REGULAR, false)) {
++		f2fs_handle_critical_error(sbi, STOP_CP_REASON_CORRUPTED_NID);
++		goto redirty_out;
++	}
+ 
+ 	if (f2fs_get_node_info(sbi, nid, &ni, !do_balance))
+ 		goto redirty_out;
+diff --git a/fs/f2fs/node.h b/fs/f2fs/node.h
+index 103a437e64255..281d53c95c9a4 100644
+--- a/fs/f2fs/node.h
++++ b/fs/f2fs/node.h
+@@ -52,13 +52,6 @@ enum {
+ 	IS_PREALLOC,		/* nat entry is preallocated */
+ };
+ 
+-/* For node type in __get_node_folio() */
+-enum node_type {
+-	NODE_TYPE_REGULAR,
+-	NODE_TYPE_INODE,
+-	NODE_TYPE_XATTR,
+-};
+-
+ /*
+  * For node information
+  */
+-- 
+2.43.0
+

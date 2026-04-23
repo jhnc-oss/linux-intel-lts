@@ -1,0 +1,52 @@
+From 27c0581714a2efb5bb6f9a0b40270cae585b9fd2 Mon Sep 17 00:00:00 2001
+From: Cezary Rojewski <cezary.rojewski@intel.com>
+Date: Mon, 18 Aug 2025 12:41:25 +0200
+Subject: [PATCH 01/16] ASoC: Intel: avs: Do not share the name pointer between
+ components
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+By sharing 'name' directly, tearing down components may lead to
+use-after-free errors. Duplicate the name to avoid that.
+
+At the same time, update the order of operations - since commit
+cee28113db17 ("ASoC: dmaengine_pcm: Allow passing component name via
+config") the framework does not override component->name if set before
+invoking the initializer.
+
+Reviewed-by: Amadeusz Sławiński <amadeuszx.slawinski@linux.intel.com>
+Signed-off-by: Cezary Rojewski <cezary.rojewski@intel.com>
+Link: https://patch.msgid.link/20250818104126.526442-4-cezary.rojewski@intel.com
+Signed-off-by: Mark Brown <broonie@kernel.org>
+---
+ sound/soc/intel/avs/pcm.c | 9 +++++----
+ 1 file changed, 5 insertions(+), 4 deletions(-)
+
+diff --git a/sound/soc/intel/avs/pcm.c b/sound/soc/intel/avs/pcm.c
+index dee871910d21..65fe2ed78f3c 100644
+--- a/sound/soc/intel/avs/pcm.c
++++ b/sound/soc/intel/avs/pcm.c
+@@ -1293,14 +1293,15 @@ int avs_soc_component_register(struct device *dev, const char *name,
+ 	if (!acomp)
+ 		return -ENOMEM;
+ 
++	acomp->base.name = devm_kstrdup(dev, name, GFP_KERNEL);
++	if (!acomp->base.name)
++		return -ENOMEM;
++	INIT_LIST_HEAD(&acomp->node);
++
+ 	ret = snd_soc_component_initialize(&acomp->base, drv, dev);
+ 	if (ret < 0)
+ 		return ret;
+ 
+-	/* force name change after ASoC is done with its init */
+-	acomp->base.name = name;
+-	INIT_LIST_HEAD(&acomp->node);
+-
+ 	return snd_soc_add_component(&acomp->base, cpu_dais, num_cpu_dais);
+ }
+ 
+-- 
+2.43.0
+
