@@ -13,8 +13,11 @@ release_region() and then the timer handler cpu5wdt_trigger() calls outb()
 to write into the region that is released, the use-after-free bug will
 happen.
 
-Change del_timer() to timer_shutdown_sync() in order that the timer handler
+Change del_timer() to del_timer_sync() in order that the timer handler
 could be finished before the port region is released.
+
+[Backport note: timer_shutdown_sync() is not available in 5.15 Android base;
+del_timer_sync() provides equivalent blocking behavior for this driver.]
 
 Fixes: e09d9c3e9f85 ("watchdog: cpu5wdt.c: add missing del_timer call")
 Signed-off-by: Duoming Zhou <duoming@zju.edu.cn>
@@ -36,7 +39,7 @@ index 688b112e712b..9f279c0e13a6 100644
  		cpu5wdt_device.queue = 0;
  		wait_for_completion(&cpu5wdt_device.stop);
 -		del_timer(&cpu5wdt_device.timer);
-+		timer_shutdown_sync(&cpu5wdt_device.timer);
++		del_timer_sync(&cpu5wdt_device.timer);
  	}
  
  	misc_deregister(&cpu5wdt_misc);
