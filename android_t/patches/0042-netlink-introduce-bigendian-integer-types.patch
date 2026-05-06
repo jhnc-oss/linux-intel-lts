@@ -1,0 +1,150 @@
+From 8a42b73ce0545c5baeb60320d04899e989394c01 Mon Sep 17 00:00:00 2001
+From: Florian Westphal <fw@strlen.de>
+Date: Mon, 31 Oct 2022 13:34:07 +0100
+Subject: [PATCH 43/65] netlink: introduce bigendian integer types
+
+[ Upstream commit ecaf75ffd5f5db320d8b1da0198eef5a5ce64a3f ]
+
+Jakub reported that the addition of the "network_byte_order"
+member in struct nla_policy increases size of 32bit platforms.
+
+Instead of scraping the bit from elsewhere Johannes suggested
+to add explicit NLA_BE types instead, so do this here.
+
+NLA_POLICY_MAX_BE() macro is removed again, there is no need
+for it: NLA_POLICY_MAX(NLA_BE.., ..) will do the right thing.
+
+NLA_BE64 can be added later.
+
+Fixes: 08724ef69907 ("netlink: introduce NLA_POLICY_MAX_BE")
+Reported-by: Jakub Kicinski <kuba@kernel.org>
+Suggested-by: Johannes Berg <johannes@sipsolutions.net>
+Signed-off-by: Florian Westphal <fw@strlen.de>
+Link: https://lore.kernel.org/r/20221031123407.9158-1-fw@strlen.de
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Stable-dep-of: 8f15b5071b45 ("netfilter: ctnetlink: use netlink policy range checks")
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+(cherry picked from commit 24ea1c8abaae6541ad95912422a9af4fb858428d)
+(cherry picked from commit 2652824bbcfc27db766aec8bf17cf24e729ff004)
+---
+ include/net/netlink.h       | 10 ++++++++++
+ lib/nlattr.c                | 10 ++++++++++
+ net/netfilter/nft_payload.c |  6 +++---
+ 3 files changed, 23 insertions(+), 3 deletions(-)
+
+diff --git a/include/net/netlink.h b/include/net/netlink.h
+index 7a2a9d3144ba6..036bcc8e2c858 100644
+--- a/include/net/netlink.h
++++ b/include/net/netlink.h
+@@ -181,6 +181,8 @@ enum {
+ 	NLA_S64,
+ 	NLA_BITFIELD32,
+ 	NLA_REJECT,
++	NLA_BE16,
++	NLA_BE32,
+ 	__NLA_TYPE_MAX,
+ };
+ 
+@@ -231,6 +233,7 @@ enum nla_policy_validation {
+  *    NLA_U32, NLA_U64,
+  *    NLA_S8, NLA_S16,
+  *    NLA_S32, NLA_S64,
++ *    NLA_BE16, NLA_BE32,
+  *    NLA_MSECS            Leaving the length field zero will verify the
+  *                         given type fits, using it verifies minimum length
+  *                         just like "All other"
+@@ -261,6 +264,8 @@ enum nla_policy_validation {
+  *    NLA_U16,
+  *    NLA_U32,
+  *    NLA_U64,
++ *    NLA_BE16,
++ *    NLA_BE32,
+  *    NLA_S8,
+  *    NLA_S16,
+  *    NLA_S32,
+@@ -368,6 +373,8 @@ struct nla_policy {
+ 	(tp == NLA_U8 || tp == NLA_U16 || tp == NLA_U32 || tp == NLA_U64)
+ #define __NLA_IS_SINT_TYPE(tp)						\
+ 	(tp == NLA_S8 || tp == NLA_S16 || tp == NLA_S32 || tp == NLA_S64)
++#define __NLA_IS_BEINT_TYPE(tp)						\
++	(tp == NLA_BE16 || tp == NLA_BE32)
+ 
+ #define __NLA_ENSURE(condition) BUILD_BUG_ON_ZERO(!(condition))
+ #define NLA_ENSURE_UINT_TYPE(tp)			\
+@@ -381,6 +388,7 @@ struct nla_policy {
+ #define NLA_ENSURE_INT_OR_BINARY_TYPE(tp)		\
+ 	(__NLA_ENSURE(__NLA_IS_UINT_TYPE(tp) ||		\
+ 		      __NLA_IS_SINT_TYPE(tp) ||		\
++		      __NLA_IS_BEINT_TYPE(tp) ||	\
+ 		      tp == NLA_MSECS ||		\
+ 		      tp == NLA_BINARY) + tp)
+ #define NLA_ENSURE_NO_VALIDATION_PTR(tp)		\
+@@ -388,6 +396,8 @@ struct nla_policy {
+ 		      tp != NLA_REJECT &&		\
+ 		      tp != NLA_NESTED &&		\
+ 		      tp != NLA_NESTED_ARRAY) + tp)
++#define NLA_ENSURE_BEINT_TYPE(tp)			\
++	(__NLA_ENSURE(__NLA_IS_BEINT_TYPE(tp)) + tp)
+ 
+ #define NLA_POLICY_RANGE(tp, _min, _max) {		\
+ 	.type = NLA_ENSURE_INT_OR_BINARY_TYPE(tp),	\
+diff --git a/lib/nlattr.c b/lib/nlattr.c
+index 73635bdb00620..b1a0b1a9fc8b0 100644
+--- a/lib/nlattr.c
++++ b/lib/nlattr.c
+@@ -125,10 +125,12 @@ void nla_get_range_unsigned(const struct nla_policy *pt,
+ 		range->max = U8_MAX;
+ 		break;
+ 	case NLA_U16:
++	case NLA_BE16:
+ 	case NLA_BINARY:
+ 		range->max = U16_MAX;
+ 		break;
+ 	case NLA_U32:
++	case NLA_BE32:
+ 		range->max = U32_MAX;
+ 		break;
+ 	case NLA_U64:
+@@ -185,6 +187,12 @@ static int nla_validate_range_unsigned(const struct nla_policy *pt,
+ 	case NLA_BINARY:
+ 		value = nla_len(nla);
+ 		break;
++	case NLA_BE16:
++		value = ntohs(nla_get_be16(nla));
++		break;
++	case NLA_BE32:
++		value = ntohl(nla_get_be32(nla));
++		break;
+ 	default:
+ 		return -EINVAL;
+ 	}
+@@ -312,6 +320,8 @@ static int nla_validate_int_range(const struct nla_policy *pt,
+ 	case NLA_U64:
+ 	case NLA_MSECS:
+ 	case NLA_BINARY:
++	case NLA_BE16:
++	case NLA_BE32:
+ 		return nla_validate_range_unsigned(pt, nla, extack, validate);
+ 	case NLA_S8:
+ 	case NLA_S16:
+diff --git a/net/netfilter/nft_payload.c b/net/netfilter/nft_payload.c
+index 49a1cf53064fe..dbafb964bd706 100644
+--- a/net/netfilter/nft_payload.c
++++ b/net/netfilter/nft_payload.c
+@@ -176,10 +176,10 @@ static const struct nla_policy nft_payload_policy[NFTA_PAYLOAD_MAX + 1] = {
+ 	[NFTA_PAYLOAD_SREG]		= { .type = NLA_U32 },
+ 	[NFTA_PAYLOAD_DREG]		= { .type = NLA_U32 },
+ 	[NFTA_PAYLOAD_BASE]		= { .type = NLA_U32 },
+-	[NFTA_PAYLOAD_OFFSET]		= { .type = NLA_U32 },
+-	[NFTA_PAYLOAD_LEN]		= { .type = NLA_U32 },
++	[NFTA_PAYLOAD_OFFSET]		= NLA_POLICY_MAX(NLA_BE32, 255),
++	[NFTA_PAYLOAD_LEN]		= NLA_POLICY_MAX(NLA_BE32, 255),
+ 	[NFTA_PAYLOAD_CSUM_TYPE]	= { .type = NLA_U32 },
+-	[NFTA_PAYLOAD_CSUM_OFFSET]	= { .type = NLA_U32 },
++	[NFTA_PAYLOAD_CSUM_OFFSET]	= NLA_POLICY_MAX(NLA_BE32, 255),
+ 	[NFTA_PAYLOAD_CSUM_FLAGS]	= { .type = NLA_U32 },
+ };
+ 
+-- 
+2.43.0
+

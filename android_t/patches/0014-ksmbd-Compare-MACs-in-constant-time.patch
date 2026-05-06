@@ -1,0 +1,73 @@
+From 119e0316a9ab96060f12c19217e1be635721aaec Mon Sep 17 00:00:00 2001
+From: Eric Biggers <ebiggers@kernel.org>
+Date: Tue, 17 Feb 2026 20:28:29 -0800
+Subject: [PATCH 15/65] ksmbd: Compare MACs in constant time
+
+To prevent timing attacks, MAC comparisons need to be constant-time.
+Replace the memcmp() with the correct function, crypto_memneq().
+
+Fixes: e2f34481b24d ("cifsd: add server-side procedures for SMB3")
+Cc: stable@vger.kernel.org
+Signed-off-by: Eric Biggers <ebiggers@kernel.org>
+Acked-by: Namjae Jeon <linkinjeon@kernel.org>
+Signed-off-by: Steve French <stfrench@microsoft.com>
+---
+ fs/ksmbd/auth.c    | 4 +++-
+ fs/ksmbd/smb2pdu.c | 5 +++--
+ 2 files changed, 6 insertions(+), 3 deletions(-)
+
+diff --git a/fs/ksmbd/auth.c b/fs/ksmbd/auth.c
+index 647692ca78a28..7a06139274172 100644
+--- a/fs/ksmbd/auth.c
++++ b/fs/ksmbd/auth.c
+@@ -13,6 +13,7 @@
+ #include <linux/xattr.h>
+ #include <crypto/hash.h>
+ #include <crypto/aead.h>
++#include <crypto/algapi.h>
+ #include <linux/random.h>
+ #include <linux/scatterlist.h>
+ 
+@@ -281,7 +282,8 @@ int ksmbd_auth_ntlmv2(struct ksmbd_conn *conn, struct ksmbd_session *sess,
+ 		goto out;
+ 	}
+ 
+-	if (memcmp(ntlmv2->ntlmv2_hash, ntlmv2_rsp, CIFS_HMAC_MD5_HASH_SIZE) != 0)
++	if (crypto_memneq(ntlmv2->ntlmv2_hash, ntlmv2_rsp,
++			  CIFS_HMAC_MD5_HASH_SIZE))
+ 		rc = -EINVAL;
+ out:
+ 	if (ctx)
+diff --git a/fs/ksmbd/smb2pdu.c b/fs/ksmbd/smb2pdu.c
+index b5ff4c855f9cb..829329abca664 100644
+--- a/fs/ksmbd/smb2pdu.c
++++ b/fs/ksmbd/smb2pdu.c
+@@ -4,6 +4,7 @@
+  *   Copyright (C) 2018 Samsung Electronics Co., Ltd.
+  */
+ 
++#include <crypto/algapi.h>
+ #include <linux/inetdevice.h>
+ #include <net/addrconf.h>
+ #include <linux/syscalls.h>
+@@ -8398,7 +8399,7 @@ int smb2_check_sign_req(struct ksmbd_work *work)
+ 				signature))
+ 		return 0;
+ 
+-	if (memcmp(signature, signature_req, SMB2_SIGNATURE_SIZE)) {
++	if (crypto_memneq(signature, signature_req, SMB2_SIGNATURE_SIZE)) {
+ 		pr_err("bad smb2 signature\n");
+ 		return 0;
+ 	}
+@@ -8486,7 +8487,7 @@ int smb3_check_sign_req(struct ksmbd_work *work)
+ 	if (ksmbd_sign_smb3_pdu(conn, signing_key, iov, 1, signature))
+ 		return 0;
+ 
+-	if (memcmp(signature, signature_req, SMB2_SIGNATURE_SIZE)) {
++	if (crypto_memneq(signature, signature_req, SMB2_SIGNATURE_SIZE)) {
+ 		pr_err("bad smb2 signature\n");
+ 		return 0;
+ 	}
+-- 
+2.43.0
+

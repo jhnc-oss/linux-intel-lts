@@ -1,0 +1,48 @@
+From 7d5c0e1d069957809e484c50d9d8ee0305732f00 Mon Sep 17 00:00:00 2001
+From: Yasuaki Torimaru <yasuakitorimaru@gmail.com>
+Date: Thu, 26 Mar 2026 14:58:00 +0900
+Subject: [PATCH 60/65] xfrm: clear trailing padding in build_polexpire()
+
+commit 71a98248c63c535eaa4d4c22f099b68d902006d0 upstream.
+
+build_expire() clears the trailing padding bytes of struct
+xfrm_user_expire after setting the hard field via memset_after(),
+but the analogous function build_polexpire() does not do this for
+struct xfrm_user_polexpire.
+
+The padding bytes after the __u8 hard field are left
+uninitialized from the heap allocation, and are then sent to
+userspace via netlink multicast to XFRMNLGRP_EXPIRE listeners,
+leaking kernel heap memory contents.
+
+Add the missing memset_after() call, matching build_expire().
+
+Fixes: 1da177e4c3f4 ("Linux-2.6.12-rc2")
+Cc: stable@vger.kernel.org
+Signed-off-by: Yasuaki Torimaru <yasuakitorimaru@gmail.com>
+Reviewed-by: Simon Horman <horms@kernel.org>
+Reviewed-by: Breno Leitao <leitao@debian.org>
+Signed-off-by: Steffen Klassert <steffen.klassert@secunet.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+(cherry picked from commit c221ed63a2769a0af8bd849dfe25740048f34ef4)
+(cherry picked from commit fbdc180b7d1d76536d9e5d08c64d4ef855a7a07b)
+---
+ net/xfrm/xfrm_user.c | 2 ++
+ 1 file changed, 2 insertions(+)
+
+diff --git a/net/xfrm/xfrm_user.c b/net/xfrm/xfrm_user.c
+index 8d18babd79f14..0efd053044cbd 100644
+--- a/net/xfrm/xfrm_user.c
++++ b/net/xfrm/xfrm_user.c
+@@ -3391,6 +3391,8 @@ static int build_polexpire(struct sk_buff *skb, struct xfrm_policy *xp,
+ 		return err;
+ 	}
+ 	upe->hard = !!hard;
++	/* clear the padding bytes */
++	memset_after(upe, 0, hard);
+ 
+ 	nlmsg_end(skb, nlh);
+ 	return 0;
+-- 
+2.43.0
+

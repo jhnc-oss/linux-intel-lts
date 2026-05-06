@@ -1,0 +1,75 @@
+From 0d9e903c95400372dd7b1350e5695cf2b4ae8598 Mon Sep 17 00:00:00 2001
+From: Sabrina Dubroca <sd@queasysnail.net>
+Date: Tue, 24 Feb 2026 00:05:14 +0100
+Subject: [PATCH 50/65] esp: fix skb leak with espintcp and async crypto
+
+[ Upstream commit 0c0eef8ccd2413b0a10eb6bbd3442333b1e64dd2 ]
+
+When the TX queue for espintcp is full, esp_output_tail_tcp will
+return an error and not free the skb, because with synchronous crypto,
+the common xfrm output code will drop the packet for us.
+
+With async crypto (esp_output_done), we need to drop the skb when
+esp_output_tail_tcp returns an error.
+
+Fixes: e27cca96cd68 ("xfrm: add espintcp (RFC 8229)")
+Signed-off-by: Sabrina Dubroca <sd@queasysnail.net>
+Reviewed-by: Simon Horman <horms@kernel.org>
+Signed-off-by: Steffen Klassert <steffen.klassert@secunet.com>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+(cherry picked from commit 41aafca57de4a4c026701622bd4648f112a9edcd)
+
+# Conflicts:
+#	net/ipv4/esp4.c
+#	net/ipv6/esp6.c
+(cherry picked from commit 3426365daaab6653d8f5d560ff18f90a10d569f1)
+---
+ net/ipv4/esp4.c | 9 ++++++---
+ net/ipv6/esp6.c | 9 ++++++---
+ 2 files changed, 12 insertions(+), 6 deletions(-)
+
+diff --git a/net/ipv4/esp4.c b/net/ipv4/esp4.c
+index 932c0d20a1ec3..2d9ff47d0a429 100644
+--- a/net/ipv4/esp4.c
++++ b/net/ipv4/esp4.c
+@@ -275,10 +275,13 @@ static void esp_output_done(struct crypto_async_request *base, int err)
+ 		xfrm_dev_resume(skb);
+ 	} else {
+ 		if (!err &&
+-		    x->encap && x->encap->encap_type == TCP_ENCAP_ESPINTCP)
+-			esp_output_tail_tcp(x, skb);
+-		else
++		    x->encap && x->encap->encap_type == TCP_ENCAP_ESPINTCP) {
++			err = esp_output_tail_tcp(x, skb);
++			if (err != -EINPROGRESS)
++				kfree_skb(skb);
++		} else {
+ 			xfrm_output_resume(skb, err);
++		}
+ 	}
+ }
+ 
+diff --git a/net/ipv6/esp6.c b/net/ipv6/esp6.c
+index 7a0d6e40aa480..498636a1fc4e9 100644
+--- a/net/ipv6/esp6.c
++++ b/net/ipv6/esp6.c
+@@ -312,10 +312,13 @@ static void esp_output_done(struct crypto_async_request *base, int err)
+ 		xfrm_dev_resume(skb);
+ 	} else {
+ 		if (!err &&
+-		    x->encap && x->encap->encap_type == TCP_ENCAP_ESPINTCP)
+-			esp_output_tail_tcp(x, skb);
+-		else
++		    x->encap && x->encap->encap_type == TCP_ENCAP_ESPINTCP) {
++			err = esp_output_tail_tcp(x, skb);
++			if (err != -EINPROGRESS)
++				kfree_skb(skb);
++		} else {
+ 			xfrm_output_resume(skb, err);
++		}
+ 	}
+ }
+ 
+-- 
+2.43.0
+

@@ -1,0 +1,42 @@
+From c780a01bad9f8dc3565e377f6f2b280c16bd0953 Mon Sep 17 00:00:00 2001
+From: Sean <pohkeng.lim@intel.com>
+Date: Thu, 30 Apr 2026 10:52:13 +0800
+Subject: [PATCH 06/65] netfilter: nf_tables: fix use-after-free in
+ nf_tables_addchain()
+
+[ Upstream commit 71e99ee20fc3f662555118cf1159443250647533 ]
+
+Add synchronize_rcu() between nf_tables_unregister_hook() and
+nf_tables_chain_destroy() in the error path of nf_tables_addchain().
+
+The upstream fix targets the 6.x code where nft_chain_add() (RCU
+publication) happens before nf_tables_register_hook(). In this 5.15
+android_t tree the order is reversed (register first, then add), so
+scenario 1 (dump UAF) is not present. However, scenario 2 (in-flight
+packets via a transiently installed NFPROTO_INET IPv4 hook dereferencing
+chain->blob_gen_X) can still occur: a synchronize_rcu() is added
+between unregister_hook and chain_destroy to close this window.
+
+Fixes: 91c7b38dc9f0 ("netfilter: nf_tables: use new transaction infrastructure to handle chain")
+Signed-off-by: Inseo An <y0un9sa@gmail.com>
+Signed-off-by: Florian Westphal <fw@strlen.de>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+---
+ net/netfilter/nf_tables_api.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/net/netfilter/nf_tables_api.c b/net/netfilter/nf_tables_api.c
+index cbec5fc23719f..07e29b0cc1961 100644
+--- a/net/netfilter/nf_tables_api.c
++++ b/net/netfilter/nf_tables_api.c
+@@ -2445,6 +2445,7 @@ static int nf_tables_addchain(struct nft_ctx *ctx, u8 family, u8 genmask,
+ err_use:
+ 	nf_tables_unregister_hook(net, table, chain);
+ err_destroy_chain:
++	synchronize_rcu();
+ 	nf_tables_chain_destroy(chain);
+ 
+ 	return err;
+-- 
+2.43.0
+

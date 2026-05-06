@@ -1,0 +1,63 @@
+From 7831ccbb63c2a938c1b830f9a91663c2850f62c8 Mon Sep 17 00:00:00 2001
+From: Kees Cook <keescook@chromium.org>
+Date: Mon, 17 May 2021 20:16:57 -0700
+Subject: [PATCH 59/65] string.h: Introduce memset_after() for wiping trailing
+ members/padding
+
+A common idiom in kernel code is to wipe the contents of a structure
+after a given member. This is especially useful in places where there is
+trailing padding. These open-coded cases are usually difficult to read
+and very sensitive to struct layout changes. Introduce a new helper,
+memset_after() that takes the target struct instance, the byte to write,
+and the member name after which the zeroing should start.
+
+Cc: Steffen Klassert <steffen.klassert@secunet.com>
+Cc: Herbert Xu <herbert@gondor.apana.org.au>
+Cc: "David S. Miller" <davem@davemloft.net>
+Cc: Jakub Kicinski <kuba@kernel.org>
+Cc: Andrew Morton <akpm@linux-foundation.org>
+Cc: Francis Laniel <laniel_francis@privacyrequired.com>
+Cc: Vincenzo Frascino <vincenzo.frascino@arm.com>
+Cc: Daniel Axtens <dja@axtens.net>
+Cc: netdev@vger.kernel.org
+Signed-off-by: Kees Cook <keescook@chromium.org>
+(cherry picked from commit 4797632f4f1d8af4e0670adcb97bf9800dc3beca)
+
+# Conflicts:
+#	lib/memcpy_kunit.c
+(cherry picked from commit 2c323473d451bfbcb4c37862a3d32584011385d5)
+---
+ include/linux/string.h | 17 +++++++++++++++++
+ 1 file changed, 17 insertions(+)
+
+diff --git a/include/linux/string.h b/include/linux/string.h
+index bf368130bc42b..1083c6eee7e69 100644
+--- a/include/linux/string.h
++++ b/include/linux/string.h
+@@ -306,6 +306,23 @@ void __write_overflow(void) __compiletime_error("detected write beyond size of o
+ void memcpy_and_pad(void *dest, size_t dest_len, const void *src, size_t count,
+ 		    int pad);
+ 
++/**
++ * memset_after - Set a value after a struct member to the end of a struct
++ *
++ * @obj: Address of target struct instance
++ * @v: Byte value to repeatedly write
++ * @member: after which struct member to start writing bytes
++ *
++ * This is good for clearing padding following the given member.
++ */
++#define memset_after(obj, v, member)					\
++({									\
++	u8 *__ptr = (u8 *)(obj);					\
++	typeof(v) __val = (v);						\
++	memset(__ptr + offsetofend(typeof(*(obj)), member), __val,	\
++	       sizeof(*(obj)) - offsetofend(typeof(*(obj)), member));	\
++})
++
+ /**
+  * str_has_prefix - Test if a string has a given prefix
+  * @str: The string to test
+-- 
+2.43.0
+
