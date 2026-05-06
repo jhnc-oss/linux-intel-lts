@@ -85,9 +85,6 @@
 #CVE-2025-40338
 0001-ASoC-Intel-avs-Do-not-share-the-name-pointer-between.patch
 
-#CVE-2025-71074
-0003-functionfs-fix-the-open-removal-races.patch
-
 #CVE-2025-71117
 0004-block-Remove-queue-freezing-from-several-sysfs-store.patch
 
@@ -211,5 +208,10 @@
 
 #CVE-2026-31428
 0040-netfilter-nfnetlink_log-fix-uninitialized-padding-le.patch
+
+#CVE-2026-31431
+0001-crypto-scatterwalk-Backport-memcpy_sglist.patch
+0002-crypto-algif_aead-Revert-to-operating-out-of-place.patch
+
 
 
