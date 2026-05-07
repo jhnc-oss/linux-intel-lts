@@ -1,6 +1,3 @@
-#CVE-2026-23377
-0002-ice-change-XDP-RxQ-frag_size-from-DMA-write-length-t.patch
-
 #CVE-2026-23374
 0003-blktrace-fix-__this_cpu_read-write-in-preemptible-co.patch
 
@@ -11,38 +8,19 @@
 #CVE-2026-23327
 0007-cxl-mbox-validate-payload-size-before-accessing-cont.patch
 
-#CVE-2026-23442
-0008-ipv6-add-NULL-checks-for-idev-in-SRv6-paths.patch
-
 #CVE-2026-23459
 0009-ip_tunnel-adapt-iptunnel_xmit_stats-to-NETDEV_PCPU_S.patch
 
-#CVE-2026-31407
-0002-netfilter-conntrack-add-missing-netlink-policy-valid.patch
-
 #CVE-2026-31420
 0001-bridge-mrp-reject-zero-test-interval-to-avoid-OOM-pa.patch
-
-#CVE-2026-31531
-0001-ipv4-nexthop-allocate-skb-dynamically-in-rtm_get_nex.patch
 
 #CVE-2026-31560
 0002-spi-dw-rename-the-spi-controller-to-ctlr.patch
 0003-spi-spi-dw-dma-fix-print-error-log-when-wait-finish-.patch
 
-#CVE-2026-31673
-0004-af_unix-read-UNIX_DIAG_VFS-data-under-unix_state_loc.patch
 
-#CVE-2026-31677
-0005-crypto-af_alg-limit-RX-SG-extraction-by-receive-buff.patch
 
-#CVE-2026-31681
-0006-netfilter-xt_multiport-validate-range-encoding-in-ch.patch
 
-#CVE-2026-31684
-0007-net-sched-act_csum-validate-nested-VLAN-headers.patch
 
-#CVE-2026-31685
-0008-netfilter-ip6t_eui64-reject-invalid-MAC-header-for-a.patch
 
 
