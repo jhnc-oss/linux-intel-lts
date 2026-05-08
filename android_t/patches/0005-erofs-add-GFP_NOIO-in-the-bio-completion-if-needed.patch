@@ -1,0 +1,68 @@
+From 08c40bf313116c833e3b841e81a2061fa85c275c Mon Sep 17 00:00:00 2001
+From: Jiucheng Xu <jiucheng.xu@amlogic.com>
+Date: Wed, 11 Mar 2026 17:11:31 +0800
+Subject: [PATCH android-5.15 5/5] erofs: add GFP_NOIO in the bio completion if
+ needed
+
+commit c23df30915f83e7257c8625b690a1cece94142a0 upstream.
+
+The bio completion path in the process context (e.g. dm-verity)
+will directly call into decompression rather than trigger another
+workqueue context for minimal scheduling latencies, which can
+then call vm_map_ram() with GFP_KERNEL.
+
+Due to insufficient memory, vm_map_ram() may generate memory
+swapping I/O, which can cause submit_bio_wait to deadlock
+in some scenarios.
+
+Trimmed down the call stack, as follows:
+
+f2fs_submit_read_io
+  submit_bio                      //bio_list is initialized.
+    mmc_blk_mq_recovery
+      z_erofs_endio
+        vm_map_ram
+          __pte_alloc_kernel
+            __alloc_pages_direct_reclaim
+              shrink_folio_list
+                __swap_writepage
+                  submit_bio_wait  //bio_list is non-NULL, hang!!!
+
+Use memalloc_noio_{save,restore}() to wrap up this path.
+
+Reviewed-by: Gao Xiang <hsiangkao@linux.alibaba.com>
+Signed-off-by: Jiucheng Xu <jiucheng.xu@amlogic.com>
+Reviewed-by: Chao Yu <chao@kernel.org>
+Signed-off-by: Gao Xiang <hsiangkao@linux.alibaba.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+(cherry picked from commit d6565ea662e17d45a577184b0011bd69de22dc2b)
+(cherry picked from commit 633f0d75463af18fbdf21fcc49e67fcac07f1745)
+---
+ fs/erofs/zdata.c | 3 +++
+ 1 file changed, 3 insertions(+)
+
+diff --git a/fs/erofs/zdata.c b/fs/erofs/zdata.c
+index eb19a1f928e0e..76ffe04bfbc06 100644
+--- a/fs/erofs/zdata.c
++++ b/fs/erofs/zdata.c
+@@ -900,6 +900,7 @@ static void z_erofs_decompress_kickoff(struct z_erofs_decompressqueue *io,
+ 				       bool sync, int bios)
+ {
+ 	struct erofs_sb_info *const sbi = EROFS_SB(io->sb);
++	int gfp_flag;
+ 
+ 	/* wake up the caller thread for sync decompression */
+ 	if (sync) {
+@@ -932,7 +933,9 @@ static void z_erofs_decompress_kickoff(struct z_erofs_decompressqueue *io,
+ 		sbi->opt.readahead_sync_decompress = true;
+ 		return;
+ 	}
++	gfp_flag = memalloc_noio_save();
+ 	z_erofs_decompressqueue_work(&io->u.work);
++	memalloc_noio_restore(gfp_flag);
+ }
+ 
+ static bool z_erofs_page_is_invalidated(struct page *page)
+-- 
+2.43.0
+

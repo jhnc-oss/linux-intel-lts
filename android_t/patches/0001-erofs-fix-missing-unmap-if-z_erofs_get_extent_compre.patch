@@ -1,0 +1,46 @@
+From ca5741e51552b87a65fc71608c12830b64acab73 Mon Sep 17 00:00:00 2001
+From: Gao Xiang <hsiangkao@linux.alibaba.com>
+Date: Mon, 5 Dec 2022 23:00:49 +0800
+Subject: [PATCH android-5.15 1/5] erofs: fix missing unmap if
+ z_erofs_get_extent_compressedlen() fails
+
+[ Upstream commit d5d188b8f8b38d3d71dd05993874b4fc9284ce95 ]
+
+Otherwise, meta buffers could be leaked.
+
+Fixes: cec6e93beadf ("erofs: support parsing big pcluster compress indexes")
+Reviewed-by: Yue Hu <huyue2@coolpad.com>
+Reviewed-by: Chao Yu <chao@kernel.org>
+Signed-off-by: Gao Xiang <hsiangkao@linux.alibaba.com>
+Link: https://lore.kernel.org/r/20221205150050.47784-1-hsiangkao@linux.alibaba.com
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+(cherry picked from commit 373b6f350aecf5dca2e7474f0b4ec8cca659f2f0)
+(cherry picked from commit 06ee1e2695e684986965d707c4f5a08e445089f3)
+---
+ fs/erofs/zmap.c | 3 ++-
+ 1 file changed, 2 insertions(+), 1 deletion(-)
+
+diff --git a/fs/erofs/zmap.c b/fs/erofs/zmap.c
+index 68c76744dc840..332dbf1dc502b 100644
+--- a/fs/erofs/zmap.c
++++ b/fs/erofs/zmap.c
+@@ -663,7 +663,7 @@ int z_erofs_map_blocks_iter(struct inode *inode,
+ 
+ 	err = z_erofs_get_extent_compressedlen(&m, initial_lcn);
+ 	if (err)
+-		goto out;
++		goto unmap_out;
+ 
+ 	if (m.headtype == Z_EROFS_VLE_CLUSTER_TYPE_PLAIN)
+ 		map->m_algorithmformat = Z_EROFS_COMPRESSION_SHIFTED;
+@@ -680,6 +680,7 @@ int z_erofs_map_blocks_iter(struct inode *inode,
+ 		if (!err)
+ 			map->m_flags |= EROFS_MAP_FULL_MAPPED;
+ 	}
++
+ unmap_out:
+ 	if (m.kaddr)
+ 		kunmap_atomic(m.kaddr);
+-- 
+2.43.0
+

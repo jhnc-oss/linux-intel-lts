@@ -906,5 +906,20 @@
 0002-crypto-algif_aead-use-memcpy_sglist-instead-of-null-.patch
 0003-crypto-algif_aead-Revert-to-operating-out-of-place.patch
 
+#CVE-2022-50811
+0001-erofs-fix-missing-unmap-if-z_erofs_get_extent_compre.patch
+
+#CVE-2022-50746
+0002-erofs-validate-the-extent-length-for-uncompressed-pc.patch
+
+#CVE-2023-53231
+0003-erofs-Fix-detection-of-atomic-context.patch
+
+#CVE-2024-53234
+0004-erofs-handle-NONHEAD-delta-1-lclusters-gracefully.patch
+
+#CVE-2026-31467
+0005-erofs-add-GFP_NOIO-in-the-bio-completion-if-needed.patch
+
 
 
