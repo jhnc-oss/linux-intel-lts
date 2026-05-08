@@ -18,6 +18,31 @@
 0002-spi-dw-rename-the-spi-controller-to-ctlr.patch
 0003-spi-spi-dw-dma-fix-print-error-log-when-wait-finish-.patch
 
+#CVE-2026-43042
+0001-mpls-add-seqcount-to-protect-the-platform_label-s-pa.patch
+
+#CVE-2026-43022
+0002-Bluetooth-hci_sync-hci_cmd_sync_queue_once-return-EE.patch
+
+#CVE-2026-43009
+0003-bpf-Fix-incorrect-pruning-due-to-atomic-fetch-precis.patch
+
+#CVE-2026-31777
+0004-ALSA-ctxfi-Check-the-error-for-index-mapping.patch
+
+#CVE-2026-31688
+0005-driver-core-enforce-device_lock-for-driver_match_dev.patch
+
+#CVE-2026-43053
+0006-xfs-factor-out-xfs_attr3_node_entry_remove.patch
+0007-xfs-factor-out-xfs_attr3_leaf_init.patch
+0008-xfs-close-crash-window-in-attr-dabtree-inactivation.patch
+
+#CVE-2026-43045
+0009-mshv-Fix-error-handling-in-mshv_region_pin.patch
+
+#CVE-2026-31771
+0010-Bluetooth-hci_event-move-wake-reason-storage-into-va.patch
 
 
 
