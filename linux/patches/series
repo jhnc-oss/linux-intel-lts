@@ -72,7 +72,9 @@
 #CVE-2026-43414
 0010-scsi-qla2xxx-Completely-fix-fcport-double-free.patch
 
-
+#CVE-2026-31574
+0001-clockevents-Prevent-timer-interrupt-starvation.patch
+0002-clockevents-Add-missing-resets-of-the-next_event_for.patch
 
 
 
