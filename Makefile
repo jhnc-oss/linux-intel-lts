@@ -1,7 +1,7 @@
 # SPDX-License-Identifier: GPL-2.0
 VERSION = 6
 PATCHLEVEL = 12
-SUBLEVEL = 77
+SUBLEVEL = 85
 EXTRAVERSION =
 NAME = Baby Opossum Posse
 
@@ -477,6 +477,7 @@ export rust_common_flags := --edition=2021 \
 			    -Aclippy::needless_lifetimes \
 			    -Wclippy::no_mangle_with_rust_abi \
 			    -Wclippy::undocumented_unsafe_blocks \
+			    -Aclippy::uninlined_format_args \
 			    -Wclippy::unnecessary_safety_comment \
 			    -Wclippy::unnecessary_safety_doc \
 			    -Wrustdoc::missing_crate_level_docs \
@@ -498,12 +499,12 @@ ifneq ($(LLVM),)
 CC		= $(LLVM_PREFIX)clang$(LLVM_SUFFIX)
 LD		= $(LLVM_PREFIX)ld.lld$(LLVM_SUFFIX)
 AR		= $(LLVM_PREFIX)llvm-ar$(LLVM_SUFFIX)
+LLVM_LINK	= $(LLVM_PREFIX)llvm-link$(LLVM_SUFFIX)
 NM		= $(LLVM_PREFIX)llvm-nm$(LLVM_SUFFIX)
 OBJCOPY		= $(LLVM_PREFIX)llvm-objcopy$(LLVM_SUFFIX)
 OBJDUMP		= $(LLVM_PREFIX)llvm-objdump$(LLVM_SUFFIX)
 READELF		= $(LLVM_PREFIX)llvm-readelf$(LLVM_SUFFIX)
 STRIP		= $(LLVM_PREFIX)llvm-strip$(LLVM_SUFFIX)
-LLVM_LINK	= $(LLVM_PREFIX)llvm-link$(LLVM_SUFFIX)
 else
 CC		= $(CROSS_COMPILE)gcc
 LD		= $(CROSS_COMPILE)ld
