@@ -2233,7 +2233,7 @@ static void process_event(struct perf_script *script,
 	struct evsel_script *es = evsel->priv;
 	FILE *fp = es->fp;
 	char str[PAGE_SIZE_NAME_LEN];
-	uint32_t e_flags;
+	uint32_t e_flags __maybe_unused;
 
 	if (output[type].fields == 0)
 		return;
@@ -2321,10 +2321,10 @@ static void process_event(struct perf_script *script,
 	}
 
 	if (PRINT_FIELD(IREGS))
-		perf_sample__fprintf_iregs(sample, attr, thread__e_machine(thread, machine), fp);
+		perf_sample__fprintf_iregs(sample, attr, thread__e_machine(thread, machine), 0, fp);
 
 	if (PRINT_FIELD(UREGS))
-		perf_sample__fprintf_uregs(sample, attr, thread__e_machine(thread, machine), fp);
+		perf_sample__fprintf_uregs(sample, attr, thread__e_machine(thread, machine), 0, fp);
 
 	if (PRINT_FIELD(BRSTACK))
 		perf_sample__fprintf_brstack(sample, thread, evsel, fp);

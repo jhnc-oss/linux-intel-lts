@@ -277,7 +277,7 @@ int unwind__get_entries(unwind_entry_cb_t cb, void *arg,
 		.best_effort    = best_effort
 	};
 	uint16_t e_machine = thread__e_machine(thread, machine);
-	const char *arch = perf_env__arch(machine->env);
+	const char *arch __maybe_unused = perf_env__arch(machine->env);
 	Dwarf_Word ip;
 	int err = -EINVAL, i;
 
