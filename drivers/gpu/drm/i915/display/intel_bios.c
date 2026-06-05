@@ -798,6 +798,7 @@ parse_panel_options(struct intel_display *display,
 	const struct bdb_lfp_options *lfp_options;
 	int panel_type = panel->vbt.panel_type;
 	int drrs_mode;
+	int rotation;
 
 	lfp_options = bdb_find_section(display, BDB_LFP_OPTIONS);
 	if (!lfp_options)
@@ -835,6 +836,35 @@ parse_panel_options(struct intel_display *display,
 		drm_dbg_kms(display->drm,
 			    "DRRS not supported (VBT input)\n");
 		break;
+	}
+
+	/* From VBT version 228, panel rotation is in Block 40 */
+	if (display->vbt.version >= 228) {
+		rotation = panel_bits(lfp_options->rotation,
+				panel_type, 2);
+
+		switch (rotation) {
+		case ENABLE_ROTATION_0:
+			display->vbt.orientation =
+				DRM_MODE_PANEL_ORIENTATION_NORMAL;
+			break;
+		case ENABLE_ROTATION_90:
+			display->vbt.orientation =
+				DRM_MODE_PANEL_ORIENTATION_RIGHT_UP;
+			break;
+		case ENABLE_ROTATION_180:
+			display->vbt.orientation =
+				DRM_MODE_PANEL_ORIENTATION_BOTTOM_UP;
+			break;
+		case ENABLE_ROTATION_270:
+			display->vbt.orientation =
+				DRM_MODE_PANEL_ORIENTATION_LEFT_UP;
+			break;
+		default:
+			display->vbt.orientation =
+				DRM_MODE_PANEL_ORIENTATION_UNKNOWN;
+		drm_dbg_kms(display->drm, "Panel rotation is invalid\n");
+		}
 	}
 }
 
@@ -1188,7 +1218,8 @@ parse_general_features(struct intel_display *display)
 		intel_bios_ssc_frequency(display, general->ssc_freq);
 	display->vbt.display_clock_mode = general->display_clock_mode;
 	display->vbt.fdi_rx_polarity_inverted = general->fdi_rx_polarity_inverted;
-	if (display->vbt.version >= 181) {
+	if ((display->vbt.version >= 181) &&
+			(display->vbt.version < 228)) {
 		display->vbt.orientation = general->rotate_180 ?
 			DRM_MODE_PANEL_ORIENTATION_BOTTOM_UP :
 			DRM_MODE_PANEL_ORIENTATION_NORMAL;
