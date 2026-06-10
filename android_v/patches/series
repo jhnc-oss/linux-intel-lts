@@ -79,8 +79,6 @@
 #CVE-2026-23247
 0001-tcp-secure_seq-add-back-ports-to-TS-offset.patch
 
-#CVE-2026-23265
-0003-f2fs-fix-to-do-sanity-check-on-node-footer-in-read-w.patch
 
 #CVE-2026-23327
 0005-cxl-mbox-validate-payload-size-before-accessing-cont.patch
@@ -88,8 +86,6 @@
 #CVE-2026-23371
 0006-sched-deadline-Fix-missing-ENQUEUE_REPLENISH-during-.patch
 
-#CVE-2026-23473
-0025-io_uring-poll-fix-multishot-recv-missing-EOF-on-wake.patch
 
 #CVE-2026-31435
 0001-netfs-Fix-read-abandonment-during-retry.patch
@@ -103,8 +99,6 @@
 #CVE-2026-31688
 0004-driver-core-enforce-device_lock-for-driver_match_dev.patch
 
-#CVE-2026-31709
-0005-smb-client-validate-the-whole-DACL-before-rewriting-.patch
 
 #CVE-2026-31717
 0006-ksmbd-validate-owner-of-durable-handle-on-reconnect.patch
@@ -117,8 +111,6 @@
 #CVE-2026-43010
 0010-bpf-Reject-sleepable-kprobe_multi-programs-at-attach.patch
 
-#CVE-2026-43109
-0011-x86-shadow-stacks-proper-error-handling-for-mmap-loc.patch
 
 #CVE-2026-43115
 0012-irqwork-Move-data-struct-to-a-types-header.patch
@@ -133,8 +125,6 @@
 #CVE-2026-43216
 0016-net-Drop-the-lock-in-skb_may_tx_timestamp.patch
 
-#CVE-2026-43284
-0017-xfrm-esp-avoid-in-place-decrypt-on-shared-skb-frags.patch
 
 #CVE-2026-43303
 0018-mm-page_alloc-clear-page-private-in-free_pages_prepa.patch
