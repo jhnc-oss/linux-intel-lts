@@ -126,6 +126,9 @@ initial_plane_bo(struct xe_device *xe,
 		if (XE_GT_WA(xe_root_mmio_gt(xe), 22019338487_display))
 			return NULL;
 
+		if (IS_ENABLED(CONFIG_PREEMPT_RT))
+			return NULL;
+
 		/*
 		 * If the FB is too big, just don't use it since fbdev is not very
 		 * important and we should probably use that space with FBC or other
