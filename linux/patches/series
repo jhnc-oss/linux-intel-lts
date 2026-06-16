@@ -73,5 +73,26 @@
 0001-clockevents-Prevent-timer-interrupt-starvation.patch
 0002-clockevents-Add-missing-resets-of-the-next_event_for.patch
 
+#CVE-2025-71313
+0001-PCI-endpoint-Add-missing-NULL-check-for-alloc_workqu.patch
+
+#CVE-2026-46153
+0002-8021q-use-RCU-for-egress-QoS-mappings.patch
+0003-8021q-delete-cleared-egress-QoS-mappings.patch
+
+#CVE-2026-46203
+0004-spi-cadence-quadspi-fix-unclocked-access-on-unbind.patch
+
+#CVE-2026-46216
+0005-drm-xe-hdcp-Add-NULL-check-for-media_gt-in-intel_hdc.patch
+
+#CVE-2026-46243
+0006-smb-client-reject-userspace-cifs.spnego-descriptions.patch
+
+#CVE-2026-46244
+0007-netfilter-nft_inner-Fix-IPv6-inner_thoff-desync.patch
+
+#CVE-2026-46252
+0008-regulator-core-fix-locking-in-regulator_resolve_supp.patch
 
 
