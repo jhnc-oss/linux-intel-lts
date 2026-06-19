@@ -1164,6 +1164,12 @@ void i915_pmu_register(struct drm_i915_private *i915)
 	};
 	int ret = -ENOMEM;
 
+	if (IS_ENABLED(CONFIG_PREEMPT_RT)) {
+		/* Workaround: disable i915 PMU support on PREEMPT_RT kernels */
+		drm_info_once(&i915->drm, "i915 PMU is disabled on PREEMPT_RT kernels\n");
+		return;
+	}
+
 	if (IS_SRIOV_VF(i915)) {
 		drm_info(&i915->drm, "PMU not supported for this GPU.");
 		return;
