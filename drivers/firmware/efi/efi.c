@@ -407,6 +407,28 @@ static void __init efi_debugfs_init(void)
 static inline void efi_debugfs_init(void) {}
 #endif
 
+static int __init efipostcore_init(void)
+{
+	if (!efi_enabled(EFI_RUNTIME_SERVICES))
+		efi.runtime_supported_mask = 0;
+
+	if (efi.runtime_supported_mask) {
+		/*
+		 * Since we process only one efi_runtime_service() at a time, an
+		 * ordered workqueue (which creates only one execution context)
+		 * should suffice for all our needs.
+		 */
+		efi_rts_wq = alloc_ordered_workqueue("efi_rts_wq", 0);
+		if (!efi_rts_wq) {
+			pr_err("Creating efi_rts_wq failed, EFI runtime services disabled.\n");
+			clear_bit(EFI_RUNTIME_SERVICES, &efi.flags);
+			efi.runtime_supported_mask = 0;
+		}
+	}
+	return 0;
+}
+postcore_initcall(efipostcore_init);
+
 static ssize_t efi_dynamic_show(struct kobject *kobj, struct kobj_attribute *attr, char *buf)
 {
 	return sprintf(buf, "%d\n", efi_enabled(EFI_RUNTIME_SERVICES));
@@ -444,26 +466,8 @@ static int __init efisubsys_init(void)
 {
 	int error;
 
-	if (!efi_enabled(EFI_RUNTIME_SERVICES))
-		efi.runtime_supported_mask = 0;
-
 	if (!efi_enabled(EFI_BOOT))
 		return 0;
-
-	if (efi.runtime_supported_mask) {
-		/*
-		 * Since we process only one efi_runtime_service() at a time, an
-		 * ordered workqueue (which creates only one execution context)
-		 * should suffice for all our needs.
-		 */
-		efi_rts_wq = alloc_ordered_workqueue("efi_rts_wq", 0);
-		if (!efi_rts_wq) {
-			pr_err("Creating efi_rts_wq failed, EFI runtime services disabled.\n");
-			clear_bit(EFI_RUNTIME_SERVICES, &efi.flags);
-			efi.runtime_supported_mask = 0;
-			return 0;
-		}
-	}
 
 	if (efi_rt_services_supported(EFI_RT_SUPPORTED_TIME_SERVICES))
 		platform_device_register_simple("rtc-efi", 0, NULL, 0);
