@@ -1,22 +1,12 @@
 #CVE-2026-23374
 0003-blktrace-fix-__this_cpu_read-write-in-preemptible-co.patch
 
-#CVE-2026-23371
-0005-sched-deadline-Fix-missing-ENQUEUE_REPLENISH-during-.patch
-0006-sched-Employ-sched_change-guards.patch
 
-#CVE-2026-23327
-0007-cxl-mbox-validate-payload-size-before-accessing-cont.patch
 
 #CVE-2026-23459
 0009-ip_tunnel-adapt-iptunnel_xmit_stats-to-NETDEV_PCPU_S.patch
 
-#CVE-2026-31420
-0001-bridge-mrp-reject-zero-test-interval-to-avoid-OOM-pa.patch
 
-#CVE-2026-31560
-0002-spi-dw-rename-the-spi-controller-to-ctlr.patch
-0003-spi-spi-dw-dma-fix-print-error-log-when-wait-finish-.patch
 
 #CVE-2026-43042
 0001-mpls-add-seqcount-to-protect-the-platform_label-s-pa.patch
@@ -44,8 +34,6 @@
 #CVE-2026-31771
 0010-Bluetooth-hci_event-move-wake-reason-storage-into-va.patch
 
-#CVE-2025-71289
-0001-fs-ntfs3-handle-attr_set_size-errors-when-truncating.patch
 
 #CVE-2026-43115
 0003-irqwork-Move-data-struct-to-a-types-header.patch
@@ -80,20 +68,10 @@
 0002-8021q-use-RCU-for-egress-QoS-mappings.patch
 0003-8021q-delete-cleared-egress-QoS-mappings.patch
 
-#CVE-2026-46203
-0004-spi-cadence-quadspi-fix-unclocked-access-on-unbind.patch
 
-#CVE-2026-46216
-0005-drm-xe-hdcp-Add-NULL-check-for-media_gt-in-intel_hdc.patch
 
-#CVE-2026-46243
-0006-smb-client-reject-userspace-cifs.spnego-descriptions.patch
 
-#CVE-2026-46244
-0007-netfilter-nft_inner-Fix-IPv6-inner_thoff-desync.patch
 
-#CVE-2026-46252
-0008-regulator-core-fix-locking-in-regulator_resolve_supp.patch
 
 #CVE-2026-45945
 0001-iommu-vt-d-Fix-race-condition-during-PASID-entry-rep.patch
