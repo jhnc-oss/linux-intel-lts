@@ -88,5 +88,17 @@
 #CVE-2026-46017
 0005-mm-fix-deferred-split-queue-races-during-migration.patch
 
+#CVE-2025-71306
+0001-ima-Access-decompressed-kernel-module-to-verify-appe.patch
+0002-ima-Fix-stack-out-of-bounds-in-is_bprm_creds_for_exe.patch
+
+#CVE-2026-45897
+0003-netfilter-nft_counter-serialize-reset-with-spinlock.patch
+
+#CVE-2026-45901
+0004-netfilter-nf_tables-revert-commit_mutex-usage-in-res.patch
+
+#CVE-2026-46130
+0005-dm-verity-fec-fix-reading-parity-bytes-split-across-.patch
 
 
