@@ -311,6 +311,7 @@ config VIDEO_MAX9X
 	tristate "MAX9X serdes support"
 	depends on VIDEO_DEV && I2C
 	select VIDEO_V4L2_SUBDEV_API
+	select I2C_ATR
 	depends on MEDIA_CAMERA_SUPPORT
 	help
 		This is a Video4Linux2 sensor-level driver for MAX9X serdes.
@@ -1263,6 +1264,7 @@ config VIDEO_MAX9X
 	tristate "MAX9X serdes support"
 	depends on VIDEO_DEV && I2C
 	select VIDEO_V4L2_SUBDEV_API
+	select I2C_ATR
 	depends on MEDIA_CAMERA_SUPPORT
 	help
 		This is a Video4Linux2 sensor-level driver
