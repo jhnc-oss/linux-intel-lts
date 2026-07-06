@@ -1717,6 +1717,7 @@ static enum spectre_v2_mitigation __init spectre_v2_select_retpoline(void)
 {
 	if (!IS_ENABLED(CONFIG_MITIGATION_RETPOLINE)) {
 		pr_err("Kernel not compiled with retpoline; no mitigation available!");
+		panic("Spectre v2: no mitigation available on vulnerable CPU");
 		return SPECTRE_V2_NONE;
 	}
 
@@ -1983,6 +1984,8 @@ static void __init spectre_v2_select_mitigation(void)
 		bhi_select_mitigation();
 
 	spectre_v2_enabled = mode;
+	if (mode == SPECTRE_V2_NONE && boot_cpu_has_bug(X86_BUG_SPECTRE_V2))
+		panic("Spectre v2: no mitigation available on vulnerable CPU");
 	pr_info("%s\n", spectre_v2_strings[mode]);
 
 	/*
