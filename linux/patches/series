@@ -1,12 +1,8 @@
 #CVE-2026-23374
 0003-blktrace-fix-__this_cpu_read-write-in-preemptible-co.patch
 
-
-
 #CVE-2026-23459
 0009-ip_tunnel-adapt-iptunnel_xmit_stats-to-NETDEV_PCPU_S.patch
-
-
 
 #CVE-2026-43042
 0001-mpls-add-seqcount-to-protect-the-platform_label-s-pa.patch
@@ -33,7 +29,6 @@
 
 #CVE-2026-31771
 0010-Bluetooth-hci_event-move-wake-reason-storage-into-va.patch
-
 
 #CVE-2026-43115
 0003-irqwork-Move-data-struct-to-a-types-header.patch
@@ -68,11 +63,6 @@
 0002-8021q-use-RCU-for-egress-QoS-mappings.patch
 0003-8021q-delete-cleared-egress-QoS-mappings.patch
 
-
-
-
-
-
 #CVE-2026-45945
 0001-iommu-vt-d-Fix-race-condition-during-PASID-entry-rep.patch
 
@@ -101,4 +91,27 @@
 #CVE-2026-46130
 0005-dm-verity-fec-fix-reading-parity-bytes-split-across-.patch
 
+#CVE-2026-46302
+0001-selinux-allow-multiple-opens-of-sys-fs-selinux-polic.patch
+
+#CVE-2026-46330
+0002-Revert-net-smc-Introduce-TCP-ULP-support.patch
+
+#CVE-2026-53222
+0003-ptp-ocp-Make-ptp_ocp_unregister_ext-NULL-aware.patch
+0004-ptp-ocp-fix-resource-freeing-order.patch
+
+#CVE-2026-53257
+0005-wifi-cfg80211-enforce-HE-EHT-cap-oper-consistency.patch
+
+#CVE-2026-53260
+0006-tcp-Add-preempt_-disable-enable-_nested-in-reqsk_que.patch
+
+#CVE-2026-53292
+0007-net-phonet-do-not-BUG_ON-in-pn_socket_autobind-on-fa.patch
+
+#CVE-2026-53308
+0008-workqueue-devres-Add-device-managed-allocate-workque.patch
+0009-power-supply-max77705_charger-implement-aicl-feature.patch
+0010-power-supply-max77705-Free-allocated-workqueue-and-f.patch
 
