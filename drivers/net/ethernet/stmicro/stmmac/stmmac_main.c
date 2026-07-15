@@ -7846,10 +7846,15 @@ int stmmac_dvr_probe(struct device *device,
 	if (ret)
 		goto error_pcs_setup;
 
-	ret = stmmac_get_phydev(priv, &phydev);
-	if (ret)
-		return ret;
-	phydev->mac_managed_pm = true;
+	/* Only look up the PHY by MDIO address when phy_addr is known
+	 * (e.g. fixed-link keeps it unset).
+	 */
+	if (priv->plat->phy_addr >= 0) {
+		ret = stmmac_get_phydev(priv, &phydev);
+		if (ret)
+			return ret;
+		phydev->mac_managed_pm = true;
+	}
 
 	ret = stmmac_phy_setup(priv);
 	if (ret) {
