@@ -53,7 +53,7 @@ int intel_iov_ggtt_pf_update_vf_ptes(struct intel_iov *iov, u32 vfid, u32 pte_of
 {
 	struct drm_mm_node *node = &iov->pf.provisioning.configs[vfid].ggtt_region;
 	u64 ggtt_addr = node->start + pte_offset * I915_GTT_PAGE_SIZE_4K;
-	u64 ggtt_addr_end = ggtt_addr + count * I915_GTT_PAGE_SIZE_4K - 1;
+	u64 ggtt_addr_end;
 	u64 vf_ggtt_end = node->start + node->size - 1;
 	gen8_pte_t pte_pattern = prepare_pattern_pte(*(ptes), vfid);
 	struct sg_table *st;
@@ -68,13 +68,15 @@ int intel_iov_ggtt_pf_update_vf_ptes(struct intel_iov *iov, u32 vfid, u32 pte_of
 	for (i = 0; i < count; i++)
 		GEM_BUG_ON(prepare_pattern_pte(ptes[i], vfid) != pte_pattern);
 
-	if (!count)
+	if (!count || !node->size)
 		return -EINVAL;
+
+	n_ptes = num_copies ? num_copies + count : count;
+
+	ggtt_addr_end = ggtt_addr + n_ptes * I915_GTT_PAGE_SIZE_4K - 1;
 
 	if (ggtt_addr_end > vf_ggtt_end)
 		return -ERANGE;
-
-	n_ptes = num_copies ? num_copies + count : count;
 
 	st = kmalloc(sizeof(*st), GFP_KERNEL);
 	if (!st)
