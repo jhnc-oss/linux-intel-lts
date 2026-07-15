@@ -158,6 +158,7 @@ static int __i915_vfio_consume(struct i915_vfio_pci_migration_file *migf, unsign
 
 out_free:
 	kvfree(data->buf);
+	data->buf = NULL;
 
 	return ret;
 }
