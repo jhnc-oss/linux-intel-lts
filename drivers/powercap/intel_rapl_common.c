@@ -1286,6 +1286,7 @@ static const struct x86_cpu_id rapl_ids[] __initconst = {
 	X86_MATCH_VFM(INTEL_EMERALDRAPIDS_X,	&rapl_defaults_spr_server),
 	X86_MATCH_VFM(INTEL_LUNARLAKE_M,	&rapl_defaults_core),
 	X86_MATCH_VFM(INTEL_PANTHERLAKE_L,	&rapl_defaults_core),
+	X86_MATCH_VFM(INTEL_PANTHERLAKE_R,	&rapl_defaults_core),
 	X86_MATCH_VFM(INTEL_WILDCATLAKE_L,	&rapl_defaults_core),
 	X86_MATCH_VFM(INTEL_NOVALAKE,		&rapl_defaults_core),
 	X86_MATCH_VFM(INTEL_NOVALAKE_L,		&rapl_defaults_core),
