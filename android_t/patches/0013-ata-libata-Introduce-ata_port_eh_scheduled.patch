@@ -1,0 +1,71 @@
+From a6808227f49336acb7a9a1bf89a207e93c8f02ba Mon Sep 17 00:00:00 2001
+From: Damien Le Moal <dlemoal@kernel.org>
+Date: Fri, 4 Jul 2025 19:46:00 +0900
+Subject: [PATCH] ata: libata: Introduce ata_port_eh_scheduled()
+
+Introduce the inline helper function ata_port_eh_scheduled() to test if
+EH is pending (ATA_PFLAG_EH_PENDING port flag is set) or running
+(ATA_PFLAG_EH_IN_PROGRESS port flag is set) for a port. Use this helper
+in ata_port_wait_eh() and __ata_scsi_queuecmd() to replace the hardcoded
+port flag tests.
+
+No functional changes.
+
+Signed-off-by: Damien Le Moal <dlemoal@kernel.org>
+Reviewed-by: Niklas Cassel <cassel@kernel.org>
+Link: https://lore.kernel.org/r/20250704104601.310643-1-dlemoal@kernel.org
+Signed-off-by: Niklas Cassel <cassel@kernel.org>
+---
+ drivers/ata/libata-eh.c   | 2 +-
+ drivers/ata/libata-scsi.c | 5 +++--
+ drivers/ata/libata.h      | 4 ++++
+ 3 files changed, 8 insertions(+), 3 deletions(-)
+
+diff --git a/drivers/ata/libata-eh.c b/drivers/ata/libata-eh.c
+index f0b690b39bf7a..c7bb2bd7eea02 100644
+--- a/drivers/ata/libata-eh.c
++++ b/drivers/ata/libata-eh.c
+@@ -787,7 +787,7 @@ void ata_port_wait_eh(struct ata_port *ap)
+  retry:
+ 	spin_lock_irqsave(ap->lock, flags);
+ 
+-	while (ap->pflags & (ATA_PFLAG_EH_PENDING | ATA_PFLAG_EH_IN_PROGRESS)) {
++	while (ata_port_eh_scheduled(ap)) {
+ 		prepare_to_wait(&ap->eh_wait_q, &wait, TASK_UNINTERRUPTIBLE);
+ 		spin_unlock_irqrestore(ap->lock, flags);
+ 		schedule();
+diff --git a/drivers/ata/libata-scsi.c b/drivers/ata/libata-scsi.c
+index f91b88073232d..1c562984de7ee 100644
+--- a/drivers/ata/libata-scsi.c
++++ b/drivers/ata/libata-scsi.c
+@@ -4026,9 +4026,10 @@ int __ata_scsi_queuecmd(struct scsi_cmnd *scmd, struct ata_device *dev)
+ 	 * scsi_queue_rq() will defer commands if scsi_host_in_recovery().
+ 	 * However, this check is done without holding the ap->lock (a libata
+ 	 * specific lock), so we can have received an error irq since then,
+-	 * therefore we must check if EH is pending, while holding ap->lock.
++	 * therefore we must check if EH is pending or running, while holding
++	 * ap->lock.
+ 	 */
+-	if (ap->pflags & (ATA_PFLAG_EH_PENDING | ATA_PFLAG_EH_IN_PROGRESS))
++	if (ata_port_eh_scheduled(ap))
+ 		return SCSI_MLQUEUE_DEVICE_BUSY;
+ 
+ 	if (unlikely(!scmd->cmd_len))
+diff --git a/drivers/ata/libata.h b/drivers/ata/libata.h
+index bf71bd9e66cd8..05d42d59391f5 100644
+--- a/drivers/ata/libata.h
++++ b/drivers/ata/libata.h
+@@ -39,6 +39,10 @@ extern int libata_noacpi;
+ extern int libata_allow_tpm;
+ extern const struct device_type ata_port_type;
+ extern struct ata_link *ata_dev_phys_link(struct ata_device *dev);
++static inline bool ata_port_eh_scheduled(struct ata_port *ap)
++{
++	return ap->pflags & (ATA_PFLAG_EH_PENDING | ATA_PFLAG_EH_IN_PROGRESS);
++}
+ #ifdef CONFIG_ATA_FORCE
+ extern void ata_force_cbl(struct ata_port *ap);
+ #else
+-- 
+2.43.0
+

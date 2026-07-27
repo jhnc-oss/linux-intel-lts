@@ -1,0 +1,36 @@
+From 38da80388172de7ea876f0375bcf8cd8864fac12 Mon Sep 17 00:00:00 2001
+From: Yang Xiuwei <yangxiuwei@kylinos.cn>
+Date: Mon, 30 Mar 2026 09:49:52 +0800
+Subject: [PATCH] scsi: sd: fix missing put_disk() when device_add(&disk_dev)
+ fails
+
+If device_add(&sdkp->disk_dev) fails, put_device() runs
+scsi_disk_release(), which frees the scsi_disk but leaves the gendisk
+referenced. The device_add_disk() error path in sd_probe() calls
+put_disk(gd); call put_disk(gd) here to mirror that cleanup.
+
+Fixes: 265dfe8ebbab ("scsi: sd: Free scsi_disk device via put_device()")
+Cc: stable@vger.kernel.org
+Reviewed-by: John Garry <john.g.garry@oracle.com>
+Signed-off-by: Yang Xiuwei <yangxiuwei@kylinos.cn>
+Link: https://patch.msgid.link/20260330014952.152776-1-yangxiuwei@kylinos.cn
+Signed-off-by: Martin K. Petersen <martin.petersen@oracle.com>
+---
+ drivers/scsi/sd.c | 1 +
+ 1 file changed, 1 insertion(+)
+
+diff --git a/drivers/scsi/sd.c b/drivers/scsi/sd.c
+index 1e887c11e83d0..d1954af90c46f 100644
+--- a/drivers/scsi/sd.c
++++ b/drivers/scsi/sd.c
+@@ -3420,6 +3420,7 @@ static int sd_probe(struct device *dev)
+ 	error = device_add(&sdkp->dev);
+ 	if (error) {
+ 		put_device(&sdkp->dev);
++		put_disk(gd);
+ 		goto out;
+ 	}
+ 
+-- 
+2.43.0
+

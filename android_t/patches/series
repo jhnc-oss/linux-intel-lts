@@ -794,3 +794,277 @@
 
 
 
+
+# CVE-2026-43116
+0001-netfilter-ctnetlink-ensure-safe-access-to-master-con.patch
+
+# CVE-2026-53303
+0002-f2fs-protect-extension_list-reading-with-sb_lock-in-.patch
+
+# CVE-2026-46266
+0003-inet-RAW-sockets-using-IPPROTO_RAW-MUST-drop-incomin.patch
+
+# CVE-2026-43048
+0004-HID-core-Mitigate-potential-OOB-by-removing-bogus-me.patch
+
+# CVE-2026-53185
+0005-zram-fix-use-after-free-in-zram_bvec_write_partial.patch
+
+# CVE-2026-43091
+0006-xfrm-Wait-for-RCU-readers-during-policy-netns-exit.patch
+
+# CVE-2026-52991
+0007-sched-psi-fix-race-between-file-release-and-pressure.patch
+
+# CVE-2026-45957
+0009-rcu-Fix-rcu_read_unlock-deadloop-due-to-softirq.patch
+
+# CVE-2026-43421
+0010-cleanup-Provide-retain_and_null_ptr.patch
+0011-usb-gadget-f_ncm-Fix-net_device-lifecycle-with-devic.patch
+
+# CVE-2026-43216
+0012-net-Drop-the-lock-in-skb_may_tx_timestamp.patch
+
+# CVE-2026-45855
+0013-ata-libata-Introduce-ata_port_eh_scheduled.patch
+0014-ata-libata-scsi-avoid-Non-NCQ-command-starvation.patch
+
+# CVE-2026-45858
+0015-ext4-subdivide-EXT4_EXT_DATA_VALID1.patch
+0016-ext4-don-t-zero-the-entire-extent-if-EXT4_EXT_DATA_P.patch
+
+# CVE-2026-43016
+0017-bpf-sockmap-Fix-use-after-free-of-sk-sk_socket-in-sk.patch
+
+# CVE-2026-45859
+0018-netfilter-nfnetlink_queue-do-shared-unconfirmed-chec.patch
+
+# CVE-2026-43115
+0019-irqwork-Move-data-struct-to-a-types-header.patch
+0020-srcu-Use-irq_work-to-start-GP-in-tiny-SRCU.patch
+
+# CVE-2025-38491
+0021-mptcp-make-fallback-action-and-fallback-decision-ato.patch
+
+# CVE-2025-21816
+0022-cpu-hotplug-Prevent-self-deadlock-on-CPU-hot-unplug.patch
+0023-hrtimers-Push-pending-hrtimers-away-from-outgoing-CP.patch
+0024-hrtimer-Report-offline-hrtimer-enqueue.patch
+0025-hrtimers-Handle-CPU-state-correctly-on-hotplug.patch
+0026-hrtimers-Force-migrate-away-hrtimers-queued-after-CP.patch
+
+# CVE-2024-57876
+0027-drm-dp_mst-Fix-resetting-msg-rx-state-after-topology.patch
+
+# CVE-2026-53289
+0028-ice-fix-NULL-pointer-dereference-in-ice_reset_all_vf.patch
+
+# CVE-2026-53207
+0029-mm-memory-failure-fix-hugetlb_lock-AA-deadlock-in-ge.patch
+
+# CVE-2026-52977
+0030-futex-Prevent-lockup-in-requeue-PI-during-signal-tim.patch
+
+# CVE-2026-53314
+0031-padata-Remove-cpu-online-check-from-cpu-add-and-remo.patch
+0032-padata-Put-CPU-offline-callback-in-ONLINE-section-to.patch
+
+# CVE-2026-53292
+0033-net-phonet-do-not-BUG_ON-in-pn_socket_autobind-on-fa.patch
+
+# CVE-2024-50284
+0034-ksmbd-Fix-the-missing-xa_store-error-check.patch
+
+# CVE-2025-21673
+0035-smb-client-fix-double-free-of-TCP_Server_Info-hostna.patch
+
+# CVE-2025-40039
+0036-ksmbd-fix-use-after-free-in-ksmbd_session_rpc_open.patch
+0037-ksmbd-Fix-race-condition-in-RPC-handle-list-access.patch
+
+# CVE-2026-43185
+0038-ksmbd-fix-signededness-bug-in-smb_direct_prepare_neg.patch
+
+# CVE-2026-43377
+0039-ksmbd-Don-t-log-keys-in-SMB3-signing-and-encryption-.patch
+
+# CVE-2026-43378
+0040-smb-server-fix-use-after-free-in-smb2_open.patch
+
+# CVE-2026-31432
+0041-ksmbd-fix-OOB-write-in-QUERY_INFO-for-compound-reque.patch
+
+# CVE-2026-31610
+0042-ksmbd-fix-mechToken-leak-when-SPNEGO-decode-fails-af.patch
+
+# CVE-2026-31611
+0043-ksmbd-require-3-sub-authorities-before-reading-sub_a.patch
+
+# CVE-2026-31612
+0044-ksmbd-validate-EaNameLength-in-smb2_get_ea.patch
+
+# CVE-2026-31704
+0045-ksmbd-use-check_add_overflow-to-prevent-u16-DACL-siz.patch
+
+# CVE-2026-31705
+0046-ksmbd-fix-out-of-bounds-write-in-smb2_get_ea-EA-alig.patch
+
+# CVE-2026-31706
+0047-ksmbd-validate-num_aces-and-harden-ACE-walk-in-smb_i.patch
+
+# CVE-2026-31707
+0048-ksmbd-validate-response-sizes-in-ipc_validate_msg.patch
+
+# CVE-2026-43490
+0049-ksmbd-validate-inherited-ACE-SID-length.patch
+
+# CVE-2026-52944
+0050-ksmbd-fix-FSCTL-permission-bypass-by-adding-a-permis.patch
+
+# CVE-2026-53198
+0051-ksmbd-fix-use-after-free-of-a-deferred-file_lock-on-.patch
+
+# CVE-2026-53284
+0052-btrfs-only-release-the-dirty-pages-io-tree-after-suc.patch
+
+# CVE-2026-53267
+0053-netfilter-nft_ct-bail-out-on-template-ct-in-get-eval.patch
+
+# CVE-2026-53258
+0054-wifi-fix-leak-if-split-6-GHz-scanning-fails.patch
+
+# CVE-2026-53246
+0055-sctp-validate-cached-peer-INIT-chunk-length-in-COOKI.patch
+
+# CVE-2026-53236
+0056-tcp-restrict-SO_ATTACH_FILTER-to-priv-users.patch
+
+# CVE-2026-53232
+0057-net-phy-clean-the-sfp-upstream-if-phy-probing-fails.patch
+
+# CVE-2026-53147
+0058-thunderbolt-Validate-XDomain-request-packet-size-bef.patch
+
+# CVE-2026-53129
+0059-fs-mbcache-cancel-shrink-work-before-destroying-the-.patch
+
+# CVE-2026-53018
+0060-f2fs-avoid-reading-already-updated-pages-during-GC.patch
+
+# CVE-2026-53009
+0061-ice-fix-double-free-of-tx_buf-skb.patch
+
+# CVE-2026-53000
+0062-netfilter-nat-use-kfree_rcu-to-release-ops.patch
+
+# CVE-2026-53015
+0063-erofs-unify-lcn-as-u64-for-32-bit-platforms.patch
+
+# CVE-2026-52989
+0064-nvmet-tcp-propagate-nvmet_tcp_build_pdu_iovec-errors.patch
+
+# CVE-2026-52988
+0065-rculist-add-list_splice_rcu-for-private-lists.patch
+0066-netfilter-nf_tables-join-hook-list-via-splice_list_r.patch
+
+# CVE-2026-52981
+0067-neigh-let-neigh_xmit-take-skb-ownership.patch
+
+# CVE-2026-52937
+0068-tap-fix-stack-info-leak-in-tap_ioctl-SIOCGIFHWADDR.patch
+
+# CVE-2026-46312
+0069-media-videobuf2-Set-vma_flags-in-vb2_dma_sg_mmap.patch
+
+# CVE-2026-46254
+0070-AppArmor-Allow-apparmor-to-handle-unaligned-dfa-tabl.patch
+
+# CVE-2026-46157
+0071-ALSA-pcm-oss-Fix-data-race-at-accessing-runtime.oss..patch
+
+# CVE-2026-46083
+0072-spi-fix-resource-leaks-on-device-setup-failure.patch
+
+# CVE-2026-45997
+0073-scsi-sd-fix-missing-put_disk-when-device_add-disk_de.patch
+
+# CVE-2026-45905
+0074-xfrm-fix-ip_rt_bug-race-in-icmp_route_lookup-reverse.patch
+
+# CVE-2026-43499
+0075-rtmutex-Use-waiter-task-instead-of-current-in-remove.patch
+
+# CVE-2026-43448
+0076-nvme-pci-Fix-race-bug-in-nvme_poll_irqdisable.patch
+
+# CVE-2026-43436
+0077-ALSA-usb-audio-Check-endpoint-numbers-at-parsing-Sca.patch
+
+# CVE-2026-43309
+0078-md-raid-fix-hang-when-stopping-arrays-with-metadata-.patch
+
+# CVE-2026-43167
+0079-xfrm-always-flush-state-and-policy-upon-NETDEV_UNREG.patch
+
+# CVE-2026-43088
+0080-net-af_key-zero-aligned-sockaddr-tail-in-PF_KEY-expo.patch
+
+# CVE-2026-43071
+0081-dcache-Limit-the-minimal-number-of-bucket-to-two.patch
+
+# CVE-2026-43036
+0082-net-use-skb_header_pointer-for-TCPv4-GSO-frag_off-ch.patch
+
+# CVE-2026-43025
+0083-netfilter-ctnetlink-ignore-explicit-helper-on-new-ex.patch
+
+# CVE-2026-31777
+0084-ALSA-ctxfi-Check-the-error-for-index-mapping.patch
+
+# CVE-2026-31767
+0085-drm-i915-dsi-Don-t-do-DSC-horizontal-timing-adjustme.patch
+
+# CVE-2026-31702
+0086-f2fs-fix-use-after-free-of-sbi-in-f2fs_compress_writ.patch
+
+# CVE-2026-31606
+0087-usb-gadget-f_hid-don-t-call-cdev_init-while-cdev-in-.patch
+
+# CVE-2026-23278
+0088-netfilter-nf_tables-always-walk-all-pending-catchall.patch
+
+# CVE-2026-23088
+0089-tracing-Fix-crash-on-synthetic-stacktrace-field-usag.patch
+
+# CVE-2026-22979
+0090-net-fix-memory-leak-in-skb_segment_list-for-GRO-pack.patch
+
+# CVE-2025-71313
+0091-PCI-endpoint-Add-missing-NULL-check-for-alloc_workqu.patch
+
+# CVE-2025-39770
+0092-net-gso-Forbid-IPv6-TSO-with-extensions-on-devices-w.patch
+
+# CVE-2025-37945
+0093-net-phy-allow-MDIO-bus-PM-ops-to-start-stop-state-ma.patch
+
+# CVE-2024-56665
+0094-bpf-perf-Fix-invalid-prog_array-access-in-perf_event.patch
+
+# CVE-2024-42273
+0095-f2fs-fix-to-avoid-use-SSR-allocate-when-do-defragmen.patch
+0096-f2fs-assign-CURSEG_ALL_DATA_ATGC-if-blkaddr-is-valid.patch
+
+# CVE-2024-27032
+0097-f2fs-fix-to-avoid-potential-panic-during-recovery.patch
+
+# CVE-2026-31575
+0098-mm-userfaultfd-fix-hugetlb-fault-mutex-hash-calculat.patch
+
+# CVE-2026-53220
+0099-netfilter-revalidate-bridge-ports.patch
+
+# CVE-2026-53224
+0100-sctp-validate-embedded-INIT-chunk-and-address-list-l.patch
+

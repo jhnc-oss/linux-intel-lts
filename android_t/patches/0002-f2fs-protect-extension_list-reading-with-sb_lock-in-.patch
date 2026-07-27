@@ -1,0 +1,53 @@
+From c86b40e5005a139344e9851e04843b25f7032051 Mon Sep 17 00:00:00 2001
+From: Yongpeng Yang <yangyongpeng@xiaomi.com>
+Date: Fri, 10 Apr 2026 23:05:39 +0800
+Subject: [PATCH] f2fs: protect extension_list reading with sb_lock in
+ f2fs_sbi_show()
+
+In f2fs_sbi_show(), the extension_list, extension_count and
+hot_ext_count are read without holding sbi->sb_lock. If a concurrent
+sysfs store modifies the extension list via f2fs_update_extension_list(),
+the show path may read inconsistent count and array contents, potentially
+leading to out-of-bounds access or displaying stale data.
+
+Fix this by holding sb_lock around the entire extension list read
+and format operation.
+
+Fixes: b6a06cbbb5f7 ("f2fs: support hot file extension")
+Signed-off-by: Yongpeng Yang <yangyongpeng@xiaomi.com>
+Reviewed-by: Chao Yu <chao@kernel.org>
+Signed-off-by: Jaegeuk Kim <jaegeuk@kernel.org>
+---
+ fs/f2fs/sysfs.c | 7 +++++--
+ 1 file changed, 5 insertions(+), 2 deletions(-)
+
+diff --git a/fs/f2fs/sysfs.c b/fs/f2fs/sysfs.c
+index 1dfd8d3074b42..24869464de653 100644
+--- a/fs/f2fs/sysfs.c
++++ b/fs/f2fs/sysfs.c
+@@ -324,10 +324,12 @@ static ssize_t f2fs_sbi_show(struct f2fs_attr *a,
+ 	if (!strcmp(a->attr.name, "extension_list")) {
+ 		__u8 (*extlist)[F2FS_EXTENSION_LEN] =
+ 					sbi->raw_super->extension_list;
+-		int cold_count = le32_to_cpu(sbi->raw_super->extension_count);
+-		int hot_count = sbi->raw_super->hot_ext_count;
++		int cold_count, hot_count;
+ 		int len = 0, i;
+ 
++		f2fs_down_read(&sbi->sb_lock);
++		cold_count = le32_to_cpu(sbi->raw_super->extension_count);
++		hot_count = sbi->raw_super->hot_ext_count;
+ 		len += scnprintf(buf + len, PAGE_SIZE - len,
+ 						"cold file extension:\n");
+ 		for (i = 0; i < cold_count; i++)
+@@ -339,6 +341,7 @@ static ssize_t f2fs_sbi_show(struct f2fs_attr *a,
+ 		for (i = cold_count; i < cold_count + hot_count; i++)
+ 			len += scnprintf(buf + len, PAGE_SIZE - len, "%s\n",
+ 								extlist[i]);
++		f2fs_up_read(&sbi->sb_lock);
+ 		return len;
+ 	}
+ 
+-- 
+2.43.0
+

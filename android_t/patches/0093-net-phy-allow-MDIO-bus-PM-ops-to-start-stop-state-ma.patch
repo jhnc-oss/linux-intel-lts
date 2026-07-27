@@ -1,0 +1,140 @@
+From d68a47f6123ccb18f23ed6e39db64022f116d2c7 Mon Sep 17 00:00:00 2001
+From: Sean Lim <pohkeng.lim@intel.com>
+Date: Fri, 24 Jul 2026 18:18:24 +0800
+Subject: [PATCH] net: phy: allow MDIO bus PM ops to start/stop state machine
+ for phylink-controlled PHY
+
+DSA has 2 kinds of drivers:
+
+1. Those who call dsa_switch_suspend() and dsa_switch_resume() from
+   their device PM ops: qca8k-8xxx, bcm_sf2, microchip ksz
+2. Those who don't: all others. The above methods should be optional.
+
+For type 1, dsa_switch_suspend() calls dsa_user_suspend() -> phylink_stop(),
+and dsa_switch_resume() calls dsa_user_resume() -> phylink_start().
+These seem good candidates for setting mac_managed_pm = true because
+that is essentially its definition, but that does not seem to be the
+biggest problem for now, and is not what this change focuses on.
+
+Talking strictly about the 2nd category of DSA drivers here (which
+do not have MAC managed PM, meaning that for their attached PHYs,
+mdio_bus_phy_suspend() and mdio_bus_phy_resume() should run in full),
+the following warning from mdio_bus_phy_resume() can be triggered:
+
+	WARN_ON(phydev->state != PHY_HALTED && phydev->state != PHY_READY &&
+		phydev->state != PHY_UP);
+
+because the PHY state machine is running as a result of a previous
+dsa_user_open() -> ... -> phylink_start() -> phy_start() having been
+initiated by the user.
+
+The previous mdio_bus_phy_suspend() was supposed to have called
+phy_stop_machine(), but it didn't. So this is why the PHY is in state
+PHY_NOLINK by the time mdio_bus_phy_resume() runs.
+
+mdio_bus_phy_suspend() did not call phy_stop_machine() because for
+phylink, the phydev->adjust_link function pointer is NULL. This seems a
+technicality introduced by commit fddd91016d16 ("phylib: fix PAL state
+machine restart on resume"). That commit was written before phylink
+existed, and was intended to avoid crashing with consumer drivers which
+don't use the PHY state machine - phylink always does, when using a PHY.
+But phylink itself has historically not been developed with
+suspend/resume in mind, and apparently not tested too much in that
+scenario, allowing this bug to exist unnoticed for so long. Plus, prior
+to the WARN_ON(), it would have likely been invisible.
+
+Make the existing conditions dependent on the PHY device having a
+phydev->phy_link_change() implementation equal to the default
+phy_link_change() provided by phylib. Otherwise, we implicitly know that
+the phydev has the phylink-provided phylink_phy_change() callback, and
+when phylink is used, the PHY state machine always needs to be stopped/
+started on the suspend/resume path. The code is structured as such that
+if phydev->phy_link_change() is absent, it is a matter of time until the
+kernel will crash - no need to further complicate the test.
+
+Thus, for the situation where the PM is not managed by the MAC, we will
+make the MDIO bus PM ops treat identically the phylink-controlled PHYs
+with the phylib-controlled PHYs where an adjust_link() callback is
+supplied. In both cases, the MDIO bus PM ops should stop and restart the
+PHY state machine.
+
+In this tree, phy_link_change() is defined much later in
+drivers/net/phy/phy_device.c than in upstream (after
+mdio_bus_phy_suspend()/mdio_bus_phy_resume()), so a forward declaration
+of phy_link_change() was added alongside the new phy_uses_state_machine()
+helper to preserve file layout and avoid relocating unrelated code.
+
+Fixes: 744d23c71af3 ("net: phy: Warn about incorrect mdio_bus_phy_resume() state")
+Reported-by: Wei Fang <wei.fang@nxp.com>
+Tested-by: Wei Fang <wei.fang@nxp.com>
+Signed-off-by: Vladimir Oltean <vladimir.oltean@nxp.com>
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+(cherry picked from commit 17eef1e44883845b9567afc893dc41e004c08d65)
+
+CVE: CVE-2025-37945
+Signed-off-by: Sean Lim <pohkeng.lim@intel.com>
+---
+ drivers/net/phy/phy_device.c | 33 +++++++++++++++++++++++++++++++--
+ 1 file changed, 31 insertions(+), 2 deletions(-)
+
+diff --git a/drivers/net/phy/phy_device.c b/drivers/net/phy/phy_device.c
+index 7ed6371854dc6..1e7777aa4e15e 100644
+--- a/drivers/net/phy/phy_device.c
++++ b/drivers/net/phy/phy_device.c
+@@ -232,6 +232,35 @@ static struct phy_driver genphy_driver;
+ static LIST_HEAD(phy_fixup_list);
+ static DEFINE_MUTEX(phy_fixup_lock);
+ 
++static void phy_link_change(struct phy_device *phydev, bool up);
++
++/**
++ * phy_uses_state_machine - test whether consumer driver uses PAL state machine
++ * @phydev: the target PHY device structure
++ *
++ * Ultimately, this aims to indirectly determine whether the PHY is attached
++ * to a consumer which uses the state machine by calling phy_start() and
++ * phy_stop().
++ *
++ * When the PHY driver consumer uses phylib, it must have previously called
++ * phy_connect_direct() or one of its derivatives, so that phy_prepare_link()
++ * has set up a hook for monitoring state changes.
++ *
++ * When the PHY driver is used by the MAC driver consumer through phylink (the
++ * only other provider of a phy_link_change() method), using the PHY state
++ * machine is not optional.
++ *
++ * Return: true if consumer calls phy_start() and phy_stop(), false otherwise.
++ */
++static bool phy_uses_state_machine(struct phy_device *phydev)
++{
++	if (phydev->phy_link_change == phy_link_change)
++		return phydev->attached_dev && phydev->adjust_link;
++
++	/* phydev->phy_link_change is implicitly phylink_phy_change() */
++	return true;
++}
++
+ static bool mdio_bus_phy_may_suspend(struct phy_device *phydev)
+ {
+ 	struct device_driver *drv = phydev->mdio.dev.driver;
+@@ -283,7 +312,7 @@ static __maybe_unused int mdio_bus_phy_suspend(struct device *dev)
+ 	 * may call phy routines that try to grab the same lock, and that may
+ 	 * lead to a deadlock.
+ 	 */
+-	if (phydev->attached_dev && phydev->adjust_link)
++	if (phy_uses_state_machine(phydev))
+ 		phy_stop_machine(phydev);
+ 
+ 	if (!mdio_bus_phy_may_suspend(phydev))
+@@ -323,7 +352,7 @@ static __maybe_unused int mdio_bus_phy_resume(struct device *dev)
+ 	if (ret < 0)
+ 		return ret;
+ no_resume:
+-	if (phydev->attached_dev && phydev->adjust_link)
++	if (phy_uses_state_machine(phydev))
+ 		phy_start_machine(phydev);
+ 
+ 	return 0;
+-- 
+2.43.0
+

@@ -1,0 +1,79 @@
+From d762c91f091fc07cb0743cbb4db7306929e1b5f8 Mon Sep 17 00:00:00 2001
+From: Jakub Ramaseuski <jramaseu@redhat.com>
+Date: Thu, 14 Aug 2025 12:51:19 +0200
+Subject: [PATCH] net: gso: Forbid IPv6 TSO with extensions on devices with
+ only IPV6_CSUM
+
+[ Upstream commit a0478d7e888028f85fa7785ea838ce0ca09398e2 ]
+[ Upstream commit 864e3396976ef41de6cc7bc366276bf4e084fff2 ]
+
+When performing Generic Segmentation Offload (GSO) on an IPv6 packet that
+contains extension headers, the kernel incorrectly requests checksum offload
+if the egress device only advertises NETIF_F_IPV6_CSUM feature, which has
+a strict contract: it supports checksum offload only for plain TCP or UDP
+over IPv6 and explicitly does not support packets with extension headers.
+The current GSO logic violates this contract by failing to disable the feature
+for packets with extension headers, such as those used in GREoIPv6 tunnels.
+
+This violation results in the device being asked to perform an operation
+it cannot support, leading to a `skb_warn_bad_offload` warning and a collapse
+of network throughput. While device TSO/USO is correctly bypassed in favor
+of software GSO for these packets, the GSO stack must be explicitly told not
+to request checksum offload.
+
+Mask NETIF_F_IPV6_CSUM, NETIF_F_TSO6 and NETIF_F_GSO_UDP_L4
+in gso_features_check if the IPv6 header contains extension headers to compute
+checksum in software.
+
+Backport note: upstream carves out an exception for the BIG TCP jumbogram
+hop-by-hop header via ipv6_has_hopopt_jumbo(), added by commit 68e068cabd2c
+("net: reenable NETIF_F_IPV6_CSUM offload for BIG TCP packets"). This
+target branch (5.15-based) does not carry BIG TCP support (no
+ipv6_has_hopopt_jumbo()/hop_jumbo_hdr infrastructure), so that helper is
+unavailable and the exception path is unreachable here regardless. The
+'!ipv6_has_hopopt_jumbo(skb)' clause was therefore dropped from the
+condition, matching the pre-BIG-TCP shape of the equivalent check in
+skb_csum_hwoffload_help() introduced by commit 04c20a9356f2 ("net: skip
+offload for NETIF_F_IPV6_CSUM if ipv6 header contains extension"), which
+is already present in this branch's net/core/dev.c. No other functional
+change from upstream.
+
+Fixes: 04c20a9356f283da ("net: skip offload for NETIF_F_IPV6_CSUM if ipv6 header contains extension")
+Reported-by: Tianhao Zhao <tizhao@redhat.com>
+Suggested-by: Michal Schmidt <mschmidt@redhat.com>
+Suggested-by: Willem de Bruijn <willemdebruijn.kernel@gmail.com>
+Signed-off-by: Jakub Ramaseuski <jramaseu@redhat.com>
+Reviewed-by: Willem de Bruijn <willemb@google.com>
+Link: https://patch.msgid.link/20250814105119.1525687-1-jramaseu@redhat.com
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+Signed-off-by: Sasha Levin <sashal@kernel.org>
+(cherry picked from commit a0478d7e888028f85fa7785ea838ce0ca09398e2)
+---
+ net/core/dev.c | 11 +++++++++++
+ 1 file changed, 11 insertions(+)
+
+diff --git a/net/core/dev.c b/net/core/dev.c
+index 66c50ccddfe77..03a59812a941c 100644
+--- a/net/core/dev.c
++++ b/net/core/dev.c
+@@ -3626,6 +3626,17 @@ static netdev_features_t gso_features_check(const struct sk_buff *skb,
+ 			features &= ~NETIF_F_TSO_MANGLEID;
+ 	}
+ 
++	/* NETIF_F_IPV6_CSUM does not support IPv6 extension headers,
++	 * so neither does TSO that depends on it.
++	 */
++	if (features & NETIF_F_IPV6_CSUM &&
++	    (skb_shinfo(skb)->gso_type & SKB_GSO_TCPV6 ||
++	     (skb_shinfo(skb)->gso_type & SKB_GSO_UDP_L4 &&
++	      vlan_get_protocol(skb) == htons(ETH_P_IPV6))) &&
++	    skb_transport_header_was_set(skb) &&
++	    skb_network_header_len(skb) != sizeof(struct ipv6hdr))
++		features &= ~(NETIF_F_IPV6_CSUM | NETIF_F_TSO6 | NETIF_F_GSO_UDP_L4);
++
+ 	return features;
+ }
+ 
+-- 
+2.43.0
+

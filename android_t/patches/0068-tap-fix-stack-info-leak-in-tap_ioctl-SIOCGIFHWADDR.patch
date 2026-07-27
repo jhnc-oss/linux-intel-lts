@@ -1,0 +1,43 @@
+From bfe9945ce238782f5293a2f1c52600da098d0fd0 Mon Sep 17 00:00:00 2001
+From: Weiming Shi <bestswngs@gmail.com>
+Date: Wed, 20 May 2026 00:57:38 -0700
+Subject: [PATCH] tap: fix stack info leak in tap_ioctl() SIOCGIFHWADDR
+
+In the SIOCGIFHWADDR path, tap_ioctl() copies 16 bytes of an
+uninitialised on-stack struct sockaddr_storage to userspace via
+ifr_hwaddr, but netif_get_mac_address() only writes sa_family and
+dev->addr_len (6 for Ethernet) bytes, leaving sa_data[6..13] uninitialised.
+
+Those 8 trailing bytes leak kernel stack contents; SIOCGIFHWADDR on a
+macvtap chardev returns kernel .text and direct-map pointers, defeating
+KASLR.
+
+Initialise ss at declaration.
+
+Fixes: 3b23a32a6321 ("net: fix dev_ifsioc_locked() race condition")
+Reported-by: Xiang Mei <xmei5@asu.edu>
+Signed-off-by: Weiming Shi <bestswngs@gmail.com>
+Reviewed-by: Willem de Bruijn <willemb@google.com>
+Link: https://patch.msgid.link/20260520075736.3415676-3-bestswngs@gmail.com
+Signed-off-by: Jakub Kicinski <kuba@kernel.org>
+(cherry picked from commit bddc09212c24934643bd44fc794748d2bbb3b6cd)
+---
+ drivers/net/tap.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/net/tap.c b/drivers/net/tap.c
+index 3a91972485cc3..1840e92759db4 100644
+--- a/drivers/net/tap.c
++++ b/drivers/net/tap.c
+@@ -981,7 +981,7 @@ static long tap_ioctl(struct file *file, unsigned int cmd,
+ 	unsigned int __user *up = argp;
+ 	unsigned short u;
+ 	int __user *sp = argp;
+-	struct sockaddr sa;
++	struct sockaddr sa = {};
+ 	int s;
+ 	int ret;
+ 
+-- 
+2.43.0
+

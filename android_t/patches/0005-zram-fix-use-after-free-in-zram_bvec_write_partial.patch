@@ -1,0 +1,48 @@
+From 1d04b9031ea69aa75ac06c9f67fe02fe5f821e21 Mon Sep 17 00:00:00 2001
+From: Cunlong Li <shenxiaogll@gmail.com>
+Date: Thu, 28 May 2026 10:48:44 +0800
+Subject: [PATCH] zram: fix use-after-free in zram_bvec_write_partial()
+
+zram_read_page() picks the sync or async backing device read path based on
+whether the parent bio is NULL.  zram_bvec_write_partial() passes its
+parent bio down, so for ZRAM_WB slots the read is dispatched
+asynchronously and zram_read_page() returns 0 while the bio is still in
+flight.  The caller then runs memcpy_from_bvec(), zram_write_page() and
+__free_page() on the buffer, leaving the async read to write into a freed
+page.
+
+zram_bvec_read_partial() was switched to NULL in commit 4e3c87b9421d
+("zram: fix synchronous reads") for the same reason; the write_partial
+counterpart was missed.
+
+Link: https://lore.kernel.org/20260528-zram-v3-1-cab86eef8764@gmail.com
+Fixes: 8e654f8fbff5 ("zram: read page from backing device")
+Reviewed-by: Christoph Hellwig <hch@lst.de>
+Reviewed-by: Sergey Senozhatsky <senozhatsky@chromium.org>
+Signed-off-by: Cunlong Li <shenxiaogll@gmail.com>
+Cc: Jens Axboe <axboe@kernel.dk>
+Cc: Minchan Kim <minchan@kernel.org>
+Cc: Yisheng Xie <xieyisheng1@huawei.com>
+Cc: <stable@vger.kernel.org>
+Signed-off-by: Andrew Morton <akpm@linux-foundation.org>
+(cherry picked from commit 732fd9f0b9c1cdc6dfd77162ded60df005182cc0)
+---
+ drivers/block/zram/zram_drv.c | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/drivers/block/zram/zram_drv.c b/drivers/block/zram/zram_drv.c
+index ddd32c96a6911..538e69a280019 100644
+--- a/drivers/block/zram/zram_drv.c
++++ b/drivers/block/zram/zram_drv.c
+@@ -1463,7 +1463,7 @@ static int zram_bvec_write(struct zram *zram, struct bio_vec *bvec,
+ 		if (!page)
+ 			return -ENOMEM;
+ 
+-		ret = __zram_bvec_read(zram, page, index, bio, true);
++		ret = __zram_bvec_read(zram, page, index, NULL, true);
+ 		if (ret)
+ 			goto out;
+ 
+-- 
+2.43.0
+
