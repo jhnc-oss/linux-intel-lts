@@ -199,11 +199,6 @@
 0002-f2fs-fix-to-avoid-use-after-free-in-f2fs_stop_gc_thr.patch
 0003-f2fs-fix-race-in-concurrent-f2fs_stop_gc_thread.patch
 
-#CVE-2024-56565
-0001-block-add-a-bdev_max_discard_sectors-helper.patch
-0002-f2fs-fix-to-drop-all-discards-after-creating-snapsho.patch
-0003-target-pass-a-block_device-to-target_configure_unmap.patch
-
 #CVE-2024-56583
 0001-sched-deadline-Fix-warning-in-migrate_enable-for-boo.patch
 
