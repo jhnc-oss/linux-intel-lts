@@ -1063,3 +1063,31 @@
 # CVE-2026-53224
 0100-sctp-validate-embedded-INIT-chunk-and-address-list-l.patch
 
+# CVE-2026-53090
+0001-bpf-Fix-ld_-abs-ind-failure-path-analysis-in-subprog.patch
+
+# CVE-2026-53089
+0002-bpf-Fix-use-after-free-in-offloaded-map-prog-info-fi.patch
+
+# CVE-2026-53106
+0003-bpf-Do-not-allow-deleting-local-storage-in-NMI.patch
+
+# CVE-2026-53083
+0004-bpf-Fix-RCU-stall-in-bpf_fd_array_map_clear.patch
+
+# CVE-2026-53111
+0005-bpf-test_run-Fix-the-null-pointer-dereference-issue-.patch
+
+# CVE-2026-53078
+0006-bpf-Fix-same-register-dst-src-OOB-read-and-pointer-l.patch
+
+# CVE-2026-53070
+0007-net-ipv6-Make-udp_tunnel6_xmit_skb-void.patch
+0008-sctp-disable-BH-before-calling-udp_tunnel_xmit_skb.patch
+
+# CVE-2026-53349
+0009-netfilter-nf_conntrack-destroy-stale-expectfn-expect.patch
+
+# CVE-2026-53353
+0010-hsr-Remove-WARN_ONCE-in-hsr_addr_is_self.patch
+
