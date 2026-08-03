@@ -7,8 +7,6 @@
 #CVE-2026-43042
 0001-mpls-add-seqcount-to-protect-the-platform_label-s-pa.patch
 
-#CVE-2026-43022
-0002-Bluetooth-hci_sync-hci_cmd_sync_queue_once-return-EE.patch
 
 #CVE-2026-43009
 0003-bpf-Fix-incorrect-pruning-due-to-atomic-fetch-precis.patch
@@ -34,8 +32,6 @@
 0003-irqwork-Move-data-struct-to-a-types-header.patch
 0004-srcu-Use-irq_work-to-start-GP-in-tiny-SRCU.patch
 
-#CVE-2026-43228
-0005-hfs-Replace-BUG_ON-with-error-handling-for-CNID-coun.patch
 
 #CVE-2026-43299
 0006-btrfs-do-not-ASSERT-when-the-fs-flips-RO-inside-btrf.patch
@@ -63,8 +59,6 @@
 0002-8021q-use-RCU-for-egress-QoS-mappings.patch
 0003-8021q-delete-cleared-egress-QoS-mappings.patch
 
-#CVE-2026-45945
-0001-iommu-vt-d-Fix-race-condition-during-PASID-entry-rep.patch
 
 #CVE-2026-45961
 0002-gfs2-fix-memory-leaks-in-gfs2_fill_super-error-path.patch
@@ -104,8 +98,6 @@
 #CVE-2026-53257
 0005-wifi-cfg80211-enforce-HE-EHT-cap-oper-consistency.patch
 
-#CVE-2026-53260
-0006-tcp-Add-preempt_-disable-enable-_nested-in-reqsk_que.patch
 
 #CVE-2026-53292
 0007-net-phonet-do-not-BUG_ON-in-pn_socket_autobind-on-fa.patch
@@ -132,8 +124,6 @@
 0005-rculist-add-list_splice_rcu-for-private-lists.patch
 0006-netfilter-nf_tables-join-hook-list-via-splice_list_r.patch
 
-#CVE-2026-53005
-0007-af_unix-Drop-all-SCM-attributes-for-SOCKMAP.patch
 
 #CVE-2026-53008
 0008-ice-fix-race-condition-in-TX-timestamp-ring-cleanup.patch
