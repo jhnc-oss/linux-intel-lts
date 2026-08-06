@@ -7264,16 +7264,32 @@ static int __igc_shutdown(struct pci_dev *pdev, bool *enable_wake,
 	u32 ctrl, rctl, status;
 	bool wake;
 
-	rtnl_lock();
-	netif_device_detach(netdev);
+	/* Use rtnl_trylock to avoid a circular lock dependency during
+	 * device_shutdown(): the reboot path may already hold the NVMe queue
+	 * freeze lock which itself depends on mmap_lock -> rtnl_mutex, so an
+	 * unconditional rtnl_lock() here would deadlock (lockdep: rtnl_mutex
+	 * -> &mm->mmap_lock -> &q->q_usage_counter(io) chain).  If we cannot
+	 * obtain rtnl immediately during shutdown we skip the clean close path;
+	 * the hardware will be reset by PCI core regardless.
+	 */
+	bool rtnl_held = rtnl_trylock();
 
-	if (netif_running(netdev))
-		__igc_close(netdev, true);
+	if (rtnl_held) {
+		netif_device_detach(netdev);
+		if (netif_running(netdev))
+			__igc_close(netdev, true);
+	} else {
+		netdev_warn(netdev,
+			    "igc_shutdown: rtnl busy, skipping clean close (racing shutdown)\n");
+		netif_device_detach(netdev);
+	}
 
 	igc_ptp_suspend(adapter);
 
 	igc_clear_interrupt_scheme(adapter);
-	rtnl_unlock();
+
+	if (rtnl_held)
+		rtnl_unlock();
 
 	status = rd32(IGC_STATUS);
 	if (status & IGC_STATUS_LU)

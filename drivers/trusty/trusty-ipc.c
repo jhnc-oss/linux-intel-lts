@@ -922,6 +922,18 @@ struct tipc_dn_chan {
 	struct list_head rx_msg_queue;
 };
 
+static int dn_state_to_errno(int state)
+{
+	if (state == TIPC_CONNECTING)
+		return -ENOTCONN;
+	if (state == TIPC_DISCONNECTED)
+		return -ENOTCONN;
+	if (state == TIPC_STALE)
+		return -ESHUTDOWN;
+
+	return -EBADFD;
+}
+
 static int dn_wait_for_reply(struct tipc_dn_chan *dn, int timeout)
 {
 	int ret;
@@ -1124,22 +1136,55 @@ err_vds_lookup:
 static int dn_connect_ioctl(struct tipc_dn_chan *dn, char __user *usr_name)
 {
 	int ret;
+	int state;
 	char name[MAX_SRV_NAME_LEN];
+
+	if (!usr_name)
+		return -EINVAL;
 
 	/* copy in service name from user space */
 	ret = strncpy_from_user(name, usr_name, sizeof(name));
 	if (ret < 0)
 		return ret;
+	if (!ret)
+		return -EINVAL;
 	if (ret == sizeof(name))
 		return -ENAMETOOLONG;
 
+	mutex_lock(&dn->lock);
+	state = dn->state;
+	if (state == TIPC_CONNECTED) {
+		ret = -EISCONN;
+		goto out_unlock;
+	}
+	if (state == TIPC_CONNECTING) {
+		ret = -EALREADY;
+		goto out_unlock;
+	}
+	if (state == TIPC_STALE) {
+		ret = -ESHUTDOWN;
+		goto out_unlock;
+	}
+	reinit_completion(&dn->reply_comp);
+	dn->state = TIPC_CONNECTING;
+	mutex_unlock(&dn->lock);
+
 	/* send connect request */
 	ret = tipc_chan_connect(dn->chan, name);
-	if (ret)
+	if (ret) {
+		mutex_lock(&dn->lock);
+		if (dn->state == TIPC_CONNECTING)
+			dn->state = TIPC_DISCONNECTED;
+		mutex_unlock(&dn->lock);
 		return ret;
+	}
 
 	/* and wait for reply */
 	return dn_wait_for_reply(dn, REPLY_TIMEOUT);
+
+out_unlock:
+	mutex_unlock(&dn->lock);
+	return ret;
 }
 
 static int dn_share_fd(struct tipc_dn_chan *dn, int fd,
@@ -1325,6 +1370,16 @@ static long filp_send_ioctl(struct file *filp,
 	long ret = 0;
 	ssize_t data_len = 0;
 	ssize_t shm_len = 0;
+	int state;
+
+	if (!arg)
+		return -EINVAL;
+
+	mutex_lock(&dn->lock);
+	state = dn->state;
+	mutex_unlock(&dn->lock);
+	if (state != TIPC_CONNECTED)
+		return dn_state_to_errno(state);
 
 	if (copy_from_user(&req, arg, sizeof(req)))
 		return -EFAULT;
@@ -1440,6 +1495,9 @@ static long tipc_ioctl(struct file *filp, unsigned int cmd, unsigned long arg)
 {
 	struct tipc_dn_chan *dn = filp->private_data;
 
+	if (WARN_ON_ONCE(!dn || !dn->chan))
+		return -EBADFD;
+
 	switch (cmd) {
 	case TIPC_IOC_CONNECT:
 		return dn_connect_ioctl(dn, (char __user *)arg);
@@ -1459,6 +1517,9 @@ static long tipc_compat_ioctl(struct file *filp,
 			      unsigned int cmd, unsigned long arg)
 {
 	struct tipc_dn_chan *dn = filp->private_data;
+
+	if (WARN_ON_ONCE(!dn || !dn->chan))
+		return -EBADFD;
 
 	switch (cmd) {
 	case TIPC_IOC32_CONNECT:
@@ -1492,18 +1553,14 @@ static ssize_t tipc_read_iter(struct kiocb *iocb, struct iov_iter *iter)
 	struct file *filp = iocb->ki_filp;
 	struct tipc_dn_chan *dn = filp->private_data;
 
+	if (WARN_ON_ONCE(!dn || !dn->chan))
+		return -EBADFD;
+
 	mutex_lock(&dn->lock);
 
 	while (list_empty(&dn->rx_msg_queue)) {
 		if (dn->state != TIPC_CONNECTED) {
-			if (dn->state == TIPC_CONNECTING)
-				ret = -ENOTCONN;
-			else if (dn->state == TIPC_DISCONNECTED)
-				ret = -ENOTCONN;
-			else if (dn->state == TIPC_STALE)
-				ret = -ESHUTDOWN;
-			else
-				ret = -EBADFD;
+			ret = dn_state_to_errno(dn->state);
 			goto out;
 		}
 
@@ -1548,6 +1605,16 @@ static ssize_t tipc_write_iter(struct kiocb *iocb, struct iov_iter *iter)
 	struct tipc_msg_buf *txbuf = NULL;
 	ssize_t ret = 0;
 	ssize_t len = 0;
+	int state;
+
+	if (WARN_ON_ONCE(!dn || !dn->chan))
+		return -EBADFD;
+
+	mutex_lock(&dn->lock);
+	state = dn->state;
+	mutex_unlock(&dn->lock);
+	if (state != TIPC_CONNECTED)
+		return dn_state_to_errno(state);
 
 	if (filp->f_flags & O_NONBLOCK)
 		timeout = 0;
@@ -1600,6 +1667,9 @@ static int tipc_release(struct inode *inode, struct file *filp)
 {
 	struct tipc_dn_chan *dn = filp->private_data;
 
+	if (!dn || !dn->chan)
+		return 0;
+
 	dn_shutdown(dn);
 
 	/* free all pending buffers */
@@ -1610,6 +1680,7 @@ static int tipc_release(struct inode *inode, struct file *filp)
 
 	/* and destroy it */
 	tipc_chan_destroy(dn->chan);
+	filp->private_data = NULL;
 
 	return 0;
 }
