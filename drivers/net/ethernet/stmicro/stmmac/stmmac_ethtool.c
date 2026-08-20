@@ -332,6 +332,13 @@ stmmac_ethtool_set_link_ksettings(struct net_device *dev,
 {
 	struct stmmac_priv *priv = netdev_priv(dev);
 
+	/* Under Intel mGbE 2.5Gbps mode, only 2500baseT/Full is supported, reject
+	 * forced link modes which are absent from the MAC capability mask.
+	 */
+	if (!(priv->phylink_config.mac_capabilities &
+	     (MAC_10 | MAC_100 | MAC_1000)))
+		return -EINVAL;
+
 	return phylink_ethtool_ksettings_set(priv->phylink, cmd);
 }
 
