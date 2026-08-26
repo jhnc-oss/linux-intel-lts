@@ -32,7 +32,10 @@ mod allocation;
 mod context;
 mod deferred_close;
 mod defs;
+#[macro_use]
+mod debug;
 mod error;
+mod netlink;
 mod node;
 mod page_range;
 mod prio;
@@ -236,6 +239,7 @@ impl<T: ListArcSafe> DTRWrap<T> {
 struct DeliverCode {
     code: u32,
     skip: AtomicBool,
+    pid: i32,
 }
 
 kernel::list::impl_list_arc_safe! {
@@ -243,10 +247,11 @@ kernel::list::impl_list_arc_safe! {
 }
 
 impl DeliverCode {
-    fn new(code: u32) -> Self {
+    fn new(code: u32, pid: i32) -> Self {
         Self {
             code,
             skip: AtomicBool::new(false),
+            pid,
         }
     }
 
@@ -271,7 +276,15 @@ impl DeliverToRead for DeliverCode {
         Ok(true)
     }
 
-    fn cancel(self: DArc<Self>) {}
+    fn cancel(self: DArc<Self>) {
+        if !self.skip.load(Ordering::Relaxed) {
+            binder_debug!(
+                pid = self.pid,
+                DeadTransaction,
+                "undelivered TRANSACTION_COMPLETE"
+            );
+        }
+    }
     fn on_thread_selected(&self, _thread: &Thread) {}
 
     fn should_sync_wakeup(&self) -> bool {
@@ -300,7 +313,9 @@ fn ptr_align(value: usize) -> Option<usize> {
 // SAFETY: We call register in `init`.
 static BINDER_SHRINKER: Shrinker = unsafe { Shrinker::new() };
 
-struct BinderModule {}
+struct BinderModule {
+    _netlink: Option<kernel::net::netlink::Registration>,
+}
 
 impl kernel::Module for BinderModule {
     fn init(_module: &'static kernel::ThisModule) -> Result<Self> {
@@ -324,24 +339,27 @@ impl kernel::Module for BinderModule {
             if binder_use_rust == 0 {
                 #[cfg(CONFIG_EVENT_TRACING)]
                 binder_remove_trace_events(_module.as_ptr());
-                return Ok(Self {});
+                return Ok(Self { _netlink: None });
             }
             if unload_binder() != 0 {
                 pr_err!("Failed to unload C Binder.");
                 #[cfg(CONFIG_EVENT_TRACING)]
                 binder_remove_trace_events(_module.as_ptr());
-                return Ok(Self {});
+                return Ok(Self { _netlink: None });
             }
         }
 
         pr_warn!("Loaded Rust Binder.");
 
+        let netlink = crate::netlink::BINDER_NL_FAMILY.register()?;
         BINDER_SHRINKER.register(kernel::c_str!("android-binder"))?;
 
         // SAFETY: The module is being loaded, so we can initialize binderfs.
         unsafe { kernel::error::to_result(binderfs::init_rust_binderfs())? };
 
-        Ok(Self {})
+        Ok(Self {
+            _netlink: Some(netlink),
+        })
     }
 }
 

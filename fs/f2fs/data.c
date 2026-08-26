@@ -44,6 +44,11 @@ struct f2fs_folio_state {
 	unsigned int		read_pages_pending;
 };
 
+struct f2fs_bio {
+	struct work_struct work;
+	struct bio bio;
+};
+
 #define	F2FS_BIO_POOL_SIZE	NR_CURSEG_TYPE
 
 EXPORT_TRACEPOINT_SYMBOL_GPL(f2fs_write_begin);
@@ -51,7 +56,7 @@ EXPORT_TRACEPOINT_SYMBOL_GPL(f2fs_write_begin);
 int __init f2fs_init_bioset(void)
 {
 	return bioset_init(&f2fs_bioset, F2FS_BIO_POOL_SIZE,
-					0, BIOSET_NEED_BVECS);
+			   offsetof(struct f2fs_bio, bio), BIOSET_NEED_BVECS);
 }
 
 void f2fs_destroy_bioset(void)
@@ -557,6 +562,7 @@ void f2fs_submit_read_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 	trace_f2fs_submit_read_bio(sbi->sb, type, bio);
 
 	iostat_update_submit_ctx(bio, type);
+	trace_android_vh_f2fs_iostat_submit(sbi->sb, type, bio);
 	submit_bio(bio);
 }
 
@@ -566,6 +572,7 @@ static void f2fs_submit_write_bio(struct f2fs_sb_info *sbi, struct bio *bio,
 	WARN_ON_ONCE(is_read_io(bio_op(bio)));
 	trace_f2fs_submit_write_bio(sbi->sb, type, bio);
 	iostat_update_submit_ctx(bio, type);
+	trace_android_vh_f2fs_iostat_submit(sbi->sb, type, bio);
 	submit_bio(bio);
 }
 
@@ -2202,7 +2209,7 @@ got_it:
 		block_nr = map->m_pblk + block_in_file - map->m_lblk;
 		folio_set_mappedtodisk(folio);
 
-		if (!!folio_test_uptodate(folio) && (!folio_test_swapcache(folio) &&
+		if (!folio_test_uptodate(folio) && (!folio_test_swapcache(folio) &&
 					!cleancache_get_page(&folio->page))) {
 			folio_mark_uptodate(folio);
 			goto confused;

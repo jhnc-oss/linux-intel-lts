@@ -9,14 +9,13 @@
 
 use kernel::{
     bindings,
-    fs::{File, LocalFile},
+    fs::LocalFile,
     list::{AtomicTracker, List, ListArc, ListLinks, TryNewListArc},
     prelude::*,
     security,
     seq_file::SeqFile,
     seq_print,
-    sync::poll::{PollCondVar, PollTable},
-    sync::{Arc, SpinLock},
+    sync::{Arc, CondVar, SpinLock},
     task::Task,
     types::{ARef, Either},
     uaccess::{UserSlice, UserSliceReader},
@@ -229,8 +228,10 @@ impl UnusedBufferSpace {
     }
 }
 
+#[must_use]
 pub(crate) enum PushWorkRes {
     Ok,
+    OkNotifyPoll,
     FailedDead(DLArc<dyn DeliverToRead>),
 }
 
@@ -238,6 +239,7 @@ impl PushWorkRes {
     fn is_ok(&self) -> bool {
         match self {
             PushWorkRes::Ok => true,
+            PushWorkRes::OkNotifyPoll => true,
             PushWorkRes::FailedDead(_) => false,
         }
     }
@@ -285,7 +287,7 @@ const LOOPER_POLL: u32 = 0x40;
 pub(crate) const LOOPER_VH_MASK: u32 = LOOPER_REGISTERED | LOOPER_ENTERED | LOOPER_EXITED;
 
 impl InnerThread {
-    fn new() -> Result<Self> {
+    fn new(pid: i32) -> Result<Self> {
         fn next_err_id() -> u32 {
             static EE_ID: AtomicU32 = AtomicU32::new(0);
             EE_ID.fetch_add(1, Ordering::Relaxed)
@@ -296,8 +298,8 @@ impl InnerThread {
             looper_need_return: false,
             is_dead: false,
             process_work_list: false,
-            reply_work: ThreadError::try_new()?,
-            return_work: ThreadError::try_new()?,
+            reply_work: ThreadError::try_new(pid)?,
+            return_work: ThreadError::try_new(pid)?,
             work_list: List::new(),
             current_transaction: None,
             extended_error: ExtendedError::new(next_err_id(), BR_OK, 0),
@@ -316,27 +318,32 @@ impl InnerThread {
 
     fn push_work(&mut self, work: DLArc<dyn DeliverToRead>) -> PushWorkRes {
         if self.is_dead {
-            PushWorkRes::FailedDead(work)
+            return PushWorkRes::FailedDead(work);
+        }
+        self.work_list.push_back(work);
+        self.process_work_list = true;
+        if self.looper_flags & LOOPER_POLL != 0 {
+            PushWorkRes::OkNotifyPoll
         } else {
-            self.work_list.push_back(work);
-            self.process_work_list = true;
             PushWorkRes::Ok
         }
     }
 
-    fn push_reply_work(&mut self, code: u32) {
+    fn push_reply_work(&mut self, code: u32) -> PushWorkRes {
         if let Ok(work) = ListArc::try_from_arc(self.reply_work.clone()) {
             work.set_error_code(code);
-            self.push_work(work);
+            self.push_work(work)
         } else {
             pr_warn!("Thread reply work is already in use.");
+            PushWorkRes::Ok
         }
     }
 
     fn push_return_work(&mut self, reply: u32) {
         if let Ok(work) = ListArc::try_from_arc(self.return_work.clone()) {
             work.set_error_code(reply);
-            self.push_work(work);
+            // Not notifying: Reply to current thread.
+            let _ = self.push_work(work);
         } else {
             pr_warn!("Thread return work is already in use.");
         }
@@ -449,7 +456,7 @@ pub(crate) struct Thread {
     #[pin]
     pub(crate) prio_lock: SpinLock<ThreadPrioState>,
     #[pin]
-    work_condvar: PollCondVar,
+    work_condvar: CondVar,
     /// Used to insert this thread into the process' `ready_threads` list.
     ///
     /// INVARIANT: May never be used for any other list than the `self.process.ready_threads`.
@@ -475,7 +482,7 @@ kernel::list::impl_list_item! {
 
 impl Thread {
     pub(crate) fn new(id: i32, process: Arc<Process>) -> Result<Arc<Self>> {
-        let inner = InnerThread::new()?;
+        let inner = InnerThread::new(process.task.pid())?;
 
         let prio = ThreadPrioState {
             state: PriorityState::Set,
@@ -489,7 +496,7 @@ impl Thread {
                 task: ARef::from(&**kernel::current!()),
                 inner <- kernel::new_spinlock!(inner, "Thread::inner"),
                 prio_lock <- kernel::new_spinlock!(prio, "Thread::prio_lock"),
-                work_condvar <- kernel::new_poll_condvar!("Thread::work_condvar"),
+                work_condvar <- kernel::new_condvar!("Thread::work_condvar"),
                 links <- ListLinks::new(),
                 links_track <- AtomicTracker::new(),
             }),
@@ -531,9 +538,16 @@ impl Thread {
         Ok(())
     }
 
+    pub(crate) fn clear_extended_error(&self, debug_id: usize) {
+        self.inner.lock().extended_error = ExtendedError::new(debug_id as u32, BR_OK, 0);
+    }
+
     pub(crate) fn get_extended_error(&self, data: UserSlice) -> Result {
         let mut writer = data.writer();
-        let ee = self.inner.lock().extended_error;
+        let mut inner = self.inner.lock();
+        let ee = inner.extended_error;
+        inner.extended_error = ExtendedError::new(0, BR_OK, 0);
+        drop(inner);
         writer.write(&ee)?;
         Ok(())
     }
@@ -606,6 +620,8 @@ impl Thread {
             }
         }
 
+        self.restore_priority(&self.process.default_priority);
+
         // If the caller doesn't want to wait, try to grab work from the process queue.
         //
         // We know nothing will have been queued directly to the thread queue because it is not in
@@ -625,8 +641,6 @@ impl Thread {
             if let Some(work) = inner.pop_work() {
                 return Ok(Some(work));
             }
-
-            self.restore_priority(&self.process.default_priority);
 
             inner.looper_flags |= LOOPER_WAITING | LOOPER_WAITING_PROC;
             let signal_pending = self.work_condvar.wait_interruptible_freezable(&mut inner);
@@ -655,7 +669,14 @@ impl Thread {
     /// Returns whether the item was successfully pushed. This can only fail if the thread is dead.
     pub(crate) fn push_work(&self, work: DLArc<dyn DeliverToRead>) -> PushWorkRes {
         let sync = work.should_sync_wakeup();
+        self.push_work_inner(work, sync)
+    }
 
+    pub(crate) fn push_work_inner(
+        &self,
+        work: DLArc<dyn DeliverToRead>,
+        sync: bool,
+    ) -> PushWorkRes {
         let res = self.inner.lock().push_work(work);
 
         if res.is_ok() {
@@ -674,7 +695,8 @@ impl Thread {
     pub(crate) fn push_work_if_looper(&self, work: DLArc<dyn DeliverToRead>) -> BinderResult {
         let mut inner = self.inner.lock();
         if inner.is_looper() && !inner.is_dead {
-            inner.push_work(work);
+            // Not notifying: Reply to current thread.
+            let _ = inner.push_work(work);
             Ok(())
         } else {
             drop(inner);
@@ -851,11 +873,12 @@ impl Thread {
                 let alloc_offset = match sg_state.unused_buffer_space.claim_next(obj_length) {
                     Ok(alloc_offset) => alloc_offset,
                     Err(err) => {
-                        pr_warn!(
-                            "Failed to claim space for a BINDER_TYPE_PTR. (offset: {}, limit: {}, size: {})",
+                        binder_debug!(
+                            UserError,
+                            "failed to claim space for a BINDER_TYPE_PTR (offset: {}, limit: {}, size: {})",
                             sg_state.unused_buffer_space.offset,
                             sg_state.unused_buffer_space.limit,
-                            obj_length,
+                            obj_length
                         );
                         return Err(err.into());
                     }
@@ -934,6 +957,7 @@ impl Thread {
                 let fds_len = num_fds.checked_mul(size_of::<u32>()).ok_or(EINVAL)?;
 
                 if !is_aligned(parent_offset, size_of::<u32>()) {
+                    binder_debug!(UserError, "FDA parent offset not aligned correctly");
                     return Err(EINVAL.into());
                 }
 
@@ -952,6 +976,7 @@ impl Thread {
                 };
 
                 if !is_aligned(parent_entry.sender_uaddr, size_of::<u32>()) {
+                    binder_debug!(UserError, "FDA parent buffer not aligned correctly");
                     return Err(EINVAL.into());
                 }
 
@@ -1033,12 +1058,9 @@ impl Thread {
 
                 let target_offset_end = fixup_offset.checked_add(fixup_len).ok_or(EINVAL)?;
                 if fixup_offset < end_of_previous_fixup || offset_end < target_offset_end {
-                    pr_warn!(
-                        "Fixups oob {} {} {} {}",
-                        fixup_offset,
-                        end_of_previous_fixup,
-                        offset_end,
-                        target_offset_end
+                    binder_debug!(
+                        UserError,
+                        "fixups oob {fixup_offset} {end_of_previous_fixup} {offset_end} {target_offset_end}"
                     );
                     return Err(EINVAL.into());
                 }
@@ -1046,18 +1068,21 @@ impl Thread {
                 let copy_off = end_of_previous_fixup;
                 let copy_len = fixup_offset - end_of_previous_fixup;
                 if let Err(err) = alloc.copy_into(&mut reader, copy_off, copy_len) {
-                    pr_warn!("Failed copying into alloc: {:?}", err);
+                    binder_debug!(UserError, "failed copying into alloc: {err:?}");
                     return Err(err.into());
                 }
                 if let PointerFixupEntry::Fixup { pointer_value, .. } = fixup {
                     let res = alloc.write::<u64>(fixup_offset, pointer_value);
                     if let Err(err) = res {
-                        pr_warn!("Failed copying ptr into alloc: {:?}", err);
+                        binder_debug!(UserError, "failed copying ptr into alloc: {err:?}");
                         return Err(err.into());
                     }
                 }
                 if let Err(err) = reader.skip(fixup_len) {
-                    pr_warn!("Failed skipping {} from reader: {:?}", fixup_len, err);
+                    binder_debug!(
+                        UserError,
+                        "failed skipping {fixup_len} from reader: {err:?}"
+                    );
                     return Err(err.into());
                 }
                 end_of_previous_fixup = target_offset_end;
@@ -1065,7 +1090,7 @@ impl Thread {
             let copy_off = end_of_previous_fixup;
             let copy_len = offset_end - end_of_previous_fixup;
             if let Err(err) = alloc.copy_into(&mut reader, copy_off, copy_len) {
-                pr_warn!("Failed copying remainder into alloc: {:?}", err);
+                binder_debug!(UserError, "failed copying remainder into alloc: {err:?}");
                 return Err(err.into());
             }
         }
@@ -1171,7 +1196,7 @@ impl Thread {
                 let offset: usize = offset.try_into().map_err(|_| EINVAL)?;
 
                 if offset < end_of_previous_object || !is_aligned(offset, size_of::<u32>()) {
-                    pr_warn!("Got transaction with invalid offset.");
+                    binder_debug!(UserError, "got transaction with invalid offset");
                     return Err(EINVAL.into());
                 }
 
@@ -1196,7 +1221,7 @@ impl Thread {
                 ) {
                     Ok(()) => end_of_previous_object = offset + object.size(),
                     Err(err) => {
-                        pr_warn!("Error while translating object.");
+                        binder_debug!(UserError, "error while translating object: {err:?}");
                         return Err(err);
                     }
                 }
@@ -1216,15 +1241,12 @@ impl Thread {
         )?;
 
         if let Some(sg_state) = sg_state.as_mut() {
-            if let Err(err) = self.apply_sg(&mut alloc, sg_state) {
-                pr_warn!("Failure in apply_sg: {:?}", err);
-                return Err(err);
-            }
+            self.apply_sg(&mut alloc, sg_state)?;
         }
 
         if let Some((off_out, secctx)) = secctx.as_mut() {
             if let Err(err) = alloc.write(secctx_off, secctx.as_bytes()) {
-                pr_warn!("Failed to write security context: {:?}", err);
+                binder_debug!(UserError, "failed to write security context: {err:?}");
                 return Err(err.into());
             }
             **off_out = secctx_off;
@@ -1238,8 +1260,17 @@ impl Thread {
             let mut inner = thread.inner.lock();
             inner.pop_transaction_to_reply(thread.as_ref())
         } {
+            binder_debug!(
+                DeadTransaction,
+                "release transaction {} in, still active",
+                transaction.debug_id
+            );
+
             let reply = Err(BR_DEAD_REPLY);
-            if !transaction.from.deliver_single_reply(reply, &transaction) {
+            if !transaction
+                .from
+                .deliver_single_reply(reply, &transaction, None)
+            {
                 break;
             }
 
@@ -1251,8 +1282,9 @@ impl Thread {
         &self,
         reply: Result<DLArc<Transaction>, u32>,
         transaction: &DArc<Transaction>,
+        extended_error: Option<ExtendedError>,
     ) {
-        if self.deliver_single_reply(reply, transaction) {
+        if self.deliver_single_reply(reply, transaction, extended_error) {
             transaction.from.unwind_transaction_stack();
         }
     }
@@ -1266,6 +1298,7 @@ impl Thread {
         &self,
         reply: Result<DLArc<Transaction>, u32>,
         transaction: &DArc<Transaction>,
+        extended_error: Option<ExtendedError>,
     ) -> bool {
         if let Ok(transaction) = &reply {
             crate::trace::trace_transaction(true, &transaction, Some(&self.task));
@@ -1273,7 +1306,7 @@ impl Thread {
             transaction.set_outstanding(&mut self.process.inner.lock());
         }
 
-        {
+        let ret = {
             let mut inner = self.inner.lock();
             if !inner.pop_transaction_replied(transaction) {
                 return false;
@@ -1283,16 +1316,23 @@ impl Thread {
                 return true;
             }
 
-            match reply {
-                Ok(work) => {
-                    inner.push_work(work);
+            if let Some(ee) = extended_error {
+                if inner.extended_error.command == BR_OK {
+                    inner.extended_error = ee;
                 }
+            }
+
+            match reply {
+                Ok(work) => inner.push_work(work),
                 Err(code) => inner.push_reply_work(code),
             }
-        }
+        };
 
         // Notify the thread now that we've released the inner lock.
         self.work_condvar.notify_sync();
+        if matches!(ret, PushWorkRes::OkNotifyPoll) {
+            self.process.notify_poll(true);
+        }
         false
     }
 
@@ -1353,6 +1393,9 @@ impl Thread {
         info.buffers_size = td.buffers_size as usize;
         // SAFETY: Above `read` call initializes all bytes, so this union read is ok.
         info.target_handle = unsafe { td.transaction_data.target.handle };
+
+        info.debug_id = super::next_debug_id();
+
         Ok(())
     }
 
@@ -1361,6 +1404,8 @@ impl Thread {
         // SAFETY: All zeros valid for this type.
         let mut info = unsafe { core::mem::zeroed::<TransactionInfo>() };
         self.read_transaction_info(cmd, reader, &mut info)?;
+
+        self.clear_extended_error(info.debug_id);
 
         let ret = if info.is_reply {
             self.reply_inner(&mut info)
@@ -1371,28 +1416,46 @@ impl Thread {
         };
 
         if let Err(err) = ret {
+            self.push_return_work(err.reply);
             if err.reply != BR_TRANSACTION_COMPLETE {
                 info.reply = err.reply;
-            }
+                if let Some(source) = &err.source {
+                    info.errno = source.to_errno();
 
-            self.push_return_work(err.reply);
-            if let Some(source) = &err.source {
-                info.errno = source.to_errno();
-                info.reply = err.reply;
+                    {
+                        let mut inner = self.inner.lock();
+                        inner.extended_error =
+                            ExtendedError::new(info.debug_id as u32, err.reply, source.to_errno());
+                    }
 
-                {
-                    let mut ee = self.inner.lock().extended_error;
-                    ee.command = err.reply;
-                    ee.param = source.to_errno();
+                    binder_debug!(
+                        FailedTransaction,
+                        "transaction {} to {}:{} failed {:?}, code {} size {}-{}",
+                        if info.is_reply {
+                            "reply"
+                        } else if info.is_oneway() {
+                            "async"
+                        } else {
+                            "call"
+                        },
+                        info.to_pid,
+                        info.to_tid,
+                        err,
+                        info.code,
+                        info.data_size,
+                        info.offsets_size
+                    );
                 }
-
-                pr_warn!(
-                    "{}:{} transaction to {} failed: {source:?}",
-                    info.from_pid,
-                    info.from_tid,
-                    info.to_pid
-                );
             }
+        }
+
+        if info.oneway_spam_suspect {
+            // If this is both a oneway spam suspect and a failure, we report it twice. This is
+            // useful in case the transaction failed with BR_TRANSACTION_PENDING_FROZEN.
+            info.report_netlink(BR_ONEWAY_SPAM_SUSPECT, &self.process.ctx);
+        }
+        if info.reply != 0 {
+            info.report_netlink(info.reply, &self.process.ctx);
         }
 
         Ok(())
@@ -1405,7 +1468,10 @@ impl Thread {
         // TODO: We need to ensure that there isn't a pending transaction in the work queue. How
         // could this happen?
         let top = self.top_of_transaction_stack()?;
-        let list_completion = DTRWrap::arc_try_new(DeliverCode::new(BR_TRANSACTION_COMPLETE))?;
+        let list_completion = DTRWrap::arc_try_new(DeliverCode::new(
+            BR_TRANSACTION_COMPLETE,
+            self.process.task.pid(),
+        ))?;
         let completion = list_completion.clone_arc();
         let transaction = Transaction::new(node_ref, top, self, info)?;
 
@@ -1414,7 +1480,7 @@ impl Thread {
         {
             let mut inner = self.inner.lock();
             if !transaction.is_stacked_on(&inner.current_transaction) {
-                pr_warn!("Transaction stack changed during transaction!");
+                binder_debug!(UserError, "got new transaction with bad transaction stack");
                 return Err(EINVAL.into());
             }
             inner.current_transaction = Some(transaction.clone_arc());
@@ -1437,8 +1503,18 @@ impl Thread {
     }
 
     fn reply_inner(self: &Arc<Self>, info: &mut TransactionInfo) -> BinderResult {
-        let orig = self.inner.lock().pop_transaction_to_reply(self)?;
+        let orig = match self.inner.lock().pop_transaction_to_reply(self) {
+            Ok(orig) => orig,
+            Err(err) => {
+                binder_debug!(UserError, "got reply transaction with no transaction stack");
+                return Err(err.into());
+            }
+        };
         if !orig.from.is_current_transaction(&orig) {
+            binder_debug!(
+                UserError,
+                "got reply transaction with bad transaction stack"
+            );
             return Err(EINVAL.into());
         }
 
@@ -1447,28 +1523,43 @@ impl Thread {
 
         // We need to complete the transaction even if we cannot complete building the reply.
         let out = (|| -> BinderResult<_> {
-            let completion = DTRWrap::arc_try_new(DeliverCode::new(BR_TRANSACTION_COMPLETE))?;
+            let completion = DTRWrap::arc_try_new(DeliverCode::new(
+                BR_TRANSACTION_COMPLETE,
+                self.process.task.pid(),
+            ))?;
             let process = orig.from.process.clone();
             let allow_fds = orig.flags & TF_ACCEPT_FDS != 0;
             let reply = Transaction::new_reply(self, process, info, allow_fds)?;
-            self.inner.lock().push_work(completion);
-            orig.from.deliver_reply(Ok(reply), &orig);
+            // Not notifying: Reply to current thread.
+            let _ = self.inner.lock().push_work(completion);
+            orig.from.deliver_reply(Ok(reply), &orig, None);
             Ok(())
         })()
         .map_err(|mut err| {
             // At this point we only return `BR_TRANSACTION_COMPLETE` to the caller, and we must let
             // the sender know that the transaction has completed (with an error in this case).
+
             pr_warn!(
-                "Failure {:?} during reply - delivering BR_FAILED_REPLY to sender.",
-                err
+                "{}:{} reply to {} failed: {err:?}",
+                info.from_pid,
+                info.from_tid,
+                info.to_pid
             );
-            let reply = Err(BR_FAILED_REPLY);
-            orig.from.deliver_reply(reply, &orig);
+            let param = err.source.as_ref().map_or(0, |e| e.to_errno());
+            let ee = ExtendedError::new(info.debug_id as u32, err.reply, param);
+            orig.from
+                .deliver_reply(Err(BR_FAILED_REPLY), &orig, Some(ee));
+            info.reply = BR_FAILED_REPLY;
             err.reply = BR_TRANSACTION_COMPLETE;
             err
         });
 
         // Restore the priority even on failure.
+        if orig.from_parent.is_some() {
+            let mut prio_state = self.prio_lock.lock();
+            prio_state.state = PriorityState::Pending;
+            prio_state.next = orig.saved_priority();
+        }
         self.restore_priority(&orig.saved_priority());
         out
     }
@@ -1483,9 +1574,11 @@ impl Thread {
         } else {
             BR_TRANSACTION_COMPLETE
         };
-        let list_completion = DTRWrap::arc_try_new(DeliverCode::new(code))?;
+        let list_completion =
+            DTRWrap::arc_try_new(DeliverCode::new(code, self.process.task.pid()))?;
         let completion = list_completion.clone_arc();
-        self.inner.lock().push_work(list_completion);
+        // Not notifying: Reply to current thread.
+        let _ = self.inner.lock().push_work(list_completion);
         match transaction.submit(info) {
             Ok(()) => Ok(()),
             Err(err) => {
@@ -1701,10 +1794,9 @@ impl Thread {
         ret
     }
 
-    pub(crate) fn poll(&self, file: &File, table: PollTable<'_>) -> (bool, u32) {
-        table.register_wait(file, &self.work_condvar);
+    pub(crate) fn poll(&self) -> Result<(bool, u32)> {
         let mut inner = self.inner.lock();
-        (inner.should_use_process_work_queue(), inner.poll())
+        Ok((inner.should_use_process_work_queue(), inner.poll()))
     }
 
     /// Make the call to `get_work` or `get_work_local` return immediately, if any.
@@ -1721,22 +1813,6 @@ impl Thread {
         }
     }
 
-    pub(crate) fn notify_if_poll_ready(&self, sync: bool) {
-        // Determine if we need to notify. This requires the lock.
-        let inner = self.inner.lock();
-        let notify = inner.looper_flags & LOOPER_POLL != 0 && inner.should_use_process_work_queue();
-        drop(inner);
-
-        // Now that the lock is no longer held, notify the waiters if we have to.
-        if notify {
-            if sync {
-                self.work_condvar.notify_sync();
-            } else {
-                self.work_condvar.notify_one();
-            }
-        }
-    }
-
     pub(crate) fn release(self: &Arc<Self>) {
         {
             let mut inner = self.inner.lock();
@@ -1745,7 +1821,6 @@ impl Thread {
             crate::trace::vh_looper_entry(self, inner.looper_flags);
         }
 
-        self.work_condvar.clear();
         self.unwind_transaction_stack();
 
         // Cancel all pending work items.
@@ -1758,14 +1833,16 @@ impl Thread {
 #[pin_data]
 struct ThreadError {
     error_code: AtomicU32,
+    pid: i32,
     #[pin]
     links_track: AtomicTracker,
 }
 
 impl ThreadError {
-    fn try_new() -> Result<DArc<Self>> {
+    fn try_new(pid: i32) -> Result<DArc<Self>> {
         DTRWrap::arc_pin_init(pin_init!(Self {
             error_code: AtomicU32::new(BR_OK),
+            pid,
             links_track <- AtomicTracker::new(),
         }))
         .map(ListArc::into_arc)
@@ -1792,7 +1869,16 @@ impl DeliverToRead for ThreadError {
         Ok(true)
     }
 
-    fn cancel(self: DArc<Self>) {}
+    fn cancel(self: DArc<Self>) {
+        let code = self.error_code.load(Ordering::Relaxed);
+        if code != BR_OK {
+            binder_debug!(
+                pid = self.pid,
+                DeadTransaction,
+                "undelivered TRANSACTION_ERROR: {code}"
+            );
+        }
+    }
     fn on_thread_selected(&self, _thread: &Thread) {}
 
     fn should_sync_wakeup(&self) -> bool {

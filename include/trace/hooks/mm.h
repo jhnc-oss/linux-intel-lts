@@ -34,6 +34,12 @@ DECLARE_RESTRICTED_HOOK(android_rvh_try_alloc_pages_gfp,
 			TP_PROTO(struct page **page, unsigned int order,
 				gfp_t gfp, enum zone_type highest_zoneidx),
 			TP_ARGS(page, order, gfp, highest_zoneidx), 1);
+DECLARE_RESTRICTED_HOOK(android_rvh_do_swap_page_relax,
+			TP_PROTO(swp_entry_t entry, bool *bypass),
+			TP_ARGS(entry, bypass), 1);
+DECLARE_RESTRICTED_HOOK(android_rvh_do_swap_page_start,
+			TP_PROTO(swp_entry_t entry),
+			TP_ARGS(entry), 1);
 DECLARE_RESTRICTED_HOOK(android_rvh_shmem_suitable_orders,
 			TP_PROTO(struct inode *inode, pgoff_t index,
 				unsigned long orders, unsigned long *suitable_orders),
@@ -80,6 +86,9 @@ DECLARE_HOOK(android_vh_mem_cgroup_css_online,
 DECLARE_HOOK(android_vh_mem_cgroup_css_offline,
 	TP_PROTO(struct cgroup_subsys_state *css, struct mem_cgroup *memcg),
 	TP_ARGS(css, memcg));
+DECLARE_HOOK(android_vh_mem_cgroup_handle_over_high,
+	TP_PROTO(bool *record_psi),
+	TP_ARGS(record_psi));
 DECLARE_HOOK(android_vh_io_statistics,
 	TP_PROTO(struct address_space *mapping, unsigned int index,
 		unsigned int nr_page, bool read, bool direct),
@@ -447,6 +456,9 @@ DECLARE_HOOK(android_vh_filemap_map_pages,
 	TP_PROTO(struct file *file, pgoff_t orig_start_pgoff, pgoff_t first_pgoff,
 		pgoff_t last_pgoff, vm_fault_t ret),
 	TP_ARGS(file, orig_start_pgoff, first_pgoff, last_pgoff, ret));
+DECLARE_HOOK(android_vh_page_cache_read,
+	TP_PROTO(struct inode *inode, pgoff_t index, unsigned long count),
+	TP_ARGS(inode, index, count));
 DECLARE_HOOK(android_vh_page_cache_readahead_start,
 	TP_PROTO(struct file *file, pgoff_t pgoff,
 		unsigned int size, bool sync),
@@ -759,6 +771,9 @@ DECLARE_HOOK(android_vh_exit_oom_victim,
 DECLARE_HOOK(android_vh_oom_killer_disable,
 	TP_PROTO(int oom_victims),
 	TP_ARGS(oom_victims));
+DECLARE_HOOK(android_vh_do_swap_page_done,
+	TP_PROTO(swp_entry_t entry),
+	TP_ARGS(entry));
 DECLARE_HOOK(android_vh_smaps_rollup_contended,
 	TP_PROTO(int map_count, int nr_contended, int *ret),
 	TP_ARGS(map_count, nr_contended, ret));
@@ -841,6 +856,9 @@ DECLARE_HOOK(android_vh_folio_end_writeback,
 DECLARE_HOOK(android_vh_folio_start_writeback,
 	TP_PROTO(struct folio *folio),
 	TP_ARGS(folio));
+DECLARE_HOOK(android_vh_override_exec_folio_order,
+	TP_PROTO(struct vm_area_struct *vma, unsigned int *order),
+	TP_ARGS(vma, order));
 #endif /* _TRACE_HOOK_MM_H */
 
 /* This part must be outside protection */

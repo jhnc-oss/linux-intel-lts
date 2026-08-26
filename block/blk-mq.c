@@ -1392,7 +1392,8 @@ static void blk_add_rq_to_plug(struct blk_plug *plug, struct request *rq)
 		trace_block_plug(rq->q);
 	}
 
-	if (!plug->multiple_queues && last && last->q != rq->q)
+	if (!plug->multiple_queues && ((last && last->q != rq->q) ||
+				       blk_pipeline_zwr(rq->q)))
 		plug->multiple_queues = true;
 	/*
 	 * Any request allocated from sched tags can't be issued to
@@ -2124,6 +2125,19 @@ static void blk_mq_commit_rqs(struct blk_mq_hw_ctx *hctx, int queued,
 	}
 }
 
+static void blk_mq_reinsert_list(struct list_head *list)
+{
+	struct request *rq;
+
+	while (!list_empty(list)) {
+		rq = list_last_entry(list, struct request, queuelist);
+		list_del_init(&rq->queuelist);
+		blk_mq_insert_request(rq, blk_mq_preserve_order(rq) ?
+				      BLK_MQ_INSERT_ORDERED :
+				      BLK_MQ_INSERT_AT_HEAD);
+	}
+}
+
 /*
  * Returns true if we did some work AND can potentially do more.
  */
@@ -2201,9 +2215,7 @@ out:
 		if (nr_budgets)
 			blk_mq_release_budgets(q, list);
 
-		spin_lock(&hctx->lock);
-		list_splice_tail_init(list, &hctx->dispatch);
-		spin_unlock(&hctx->lock);
+		blk_mq_reinsert_list(list);
 
 		/*
 		 * Order adding requests to hctx->dispatch and checking
@@ -2703,8 +2715,6 @@ static void blk_mq_insert_request(struct request *rq, blk_insert_t flags)
 	} else if (q->elevator) {
 		LIST_HEAD(list);
 
-		WARN_ON_ONCE(rq->tag != BLK_MQ_NO_TAG);
-
 		list_add(&rq->queuelist, &list);
 		q->elevator->type->ops.insert_requests(hctx, &list, flags);
 	} else {
@@ -3011,7 +3021,8 @@ static void blk_mq_try_issue_list_directly(struct blk_mq_hw_ctx *hctx,
 		case BLK_STS_DEV_RESOURCE:
 			blk_mq_request_bypass_insert(rq, 0);
 			if (list_empty(list))
-				blk_mq_run_hw_queue(hctx, false);
+				blk_mq_run_hw_queue(hctx,
+					blk_mq_zwp_mutex(hctx) != NULL);
 			goto out;
 		default:
 			blk_mq_end_request(rq, ret);
@@ -3292,6 +3303,25 @@ blk_status_t blk_insert_cloned_request(struct request *rq)
 		printk(KERN_ERR "%s: over max segments limit. (%u > %u)\n",
 			__func__, rq->nr_phys_segments, max_segments);
 		return BLK_STS_IOERR;
+	}
+
+	/*
+	 * Integrity segment counting depends on the same queue limits
+	 * (virt_boundary_mask, seg_boundary_mask, max_segment_size) that
+	 * vary across stacked queues, so recompute against the bottom
+	 * queue just like nr_phys_segments above.
+	 */
+	if (blk_integrity_rq(rq) && rq->bio) {
+		unsigned short max_int_segs = queue_max_integrity_segments(q);
+
+		rq->nr_integrity_segments =
+			blk_rq_count_integrity_sg(rq->q, rq->bio);
+		if (rq->nr_integrity_segments > max_int_segs) {
+			printk(KERN_ERR "%s: over max integrity segments limit. (%u > %u)\n",
+				__func__, rq->nr_integrity_segments,
+				max_int_segs);
+			return BLK_STS_IOERR;
+		}
 	}
 
 	if (q->disk && should_fail_request(q->disk->part0, blk_rq_bytes(rq)))
@@ -3833,9 +3863,7 @@ static int blk_mq_hctx_notify_dead(unsigned int cpu, struct hlist_node *node)
 	if (list_empty(&tmp))
 		return 0;
 
-	spin_lock(&hctx->lock);
-	list_splice_tail_init(&tmp, &hctx->dispatch);
-	spin_unlock(&hctx->lock);
+	blk_mq_reinsert_list(&tmp);
 
 	blk_mq_run_hw_queue(hctx, true);
 	return 0;

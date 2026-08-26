@@ -457,6 +457,8 @@
   trace_handle_return
   trace_raw_output_prep
   __trace_trigger_soft_disabled
+  __traceiter_android_vh_override_exec_folio_order
+  __tracepoint_android_vh_override_exec_folio_order
   unregister_netdev
   unregister_netdevice_notifier
   unregister_netdevice_queue
@@ -1038,6 +1040,7 @@
 # required by snd-aloop.ko
   devm_kfree
   devm_kstrdup
+  hrtimer_try_to_cancel
   snd_card_ref
   snd_card_rw_proc_new
   snd_ctl_boolean_mono_info
@@ -1222,6 +1225,7 @@
   __tracepoint_dma_fence_emit
   video_firmware_drivers_only
   vmemdup_user
+  ww_mutex_lock
   ww_mutex_lock_interruptible
   ww_mutex_unlock
 
