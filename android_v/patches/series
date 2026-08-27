@@ -64,8 +64,6 @@
 #CVE-2025-68368
 0018-md-init-bioset-in-mddev_init.patch
 
-#CVE-2025-68251
-0044-erofs-avoid-infinite-loops-due-to-corrupted-subpage-.patch
 
 #CVE-2025-68319
 0059-netconsole-Acquire-su_mutex-before-navigating-config.patch
@@ -100,8 +98,6 @@
 0004-driver-core-enforce-device_lock-for-driver_match_dev.patch
 
 
-#CVE-2026-31717
-0006-ksmbd-validate-owner-of-durable-handle-on-reconnect.patch
 
 #CVE-2026-31777
 0007-ALSA-ctxfi-Use-explicit-output-flag-for-DAIO-resourc.patch
@@ -126,8 +122,6 @@
 0016-net-Drop-the-lock-in-skb_may_tx_timestamp.patch
 
 
-#CVE-2026-43303
-0018-mm-page_alloc-clear-page-private-in-free_pages_prepa.patch
 
 #CVE-2026-43309
 0019-md-raid-fix-hang-when-stopping-arrays-with-metadata-.patch
@@ -144,8 +138,6 @@
 #CVE-2026-43083
 0001-net-ioam6-fix-OOB-and-missing-lock.patch
 
-#CVE-2026-46300
-0002-net-skbuff-preserve-shared-frag-marker-during-coales.patch
 
 
 
