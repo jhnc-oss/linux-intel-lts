@@ -1,0 +1,65 @@
+From 214d3519efa764520cb60fe0bad7fb7b5e102cfb Mon Sep 17 00:00:00 2001
+From: "Gustavo A. R. Silva" <gustavoars@kernel.org>
+Date: Wed, 17 Sep 2025 15:26:49 +0200
+Subject: [PATCH 165/218] stddef: Remove token-pasting in TRAILING_OVERLAP()
+
+Currently, TRAILING_OVERLAP() token-pastes the FAM parameter into the
+name of internal pdding member `__offset_to_##FAM`. This forces FAM to
+be a single identifier, which prevents callers from using a FAM when
+it's a nested member. For instance, see the following scenario:
+
+| struct flex {
+| 	size_t count;
+| 	int data[];
+| };
+
+| struct foo {
+| 	int hdr_foo;
+| 	struct flex f;
+| };
+
+| struct composite {
+| 	struct foo hdr;
+| 	int data[100];
+| };
+
+In this case, it'd be useful if TRAILING_OVERLAP() could be used in
+the following way:
+
+| struct composite {
+| 	TRAILING_OVERLAP(struct foo, hdr, f.data,
+| 		int data[100];
+| 	);
+| };
+
+However, this is not current possible due to the token concatenation
+in `__offset_to_##FAM`, which fails when FAM contains a dot.
+
+So, remove token-pasting and use the fixed internal name
+`__offset_to_FAM` and, with this, expand the capabilities of
+TRAILING_OVERLAP(). :)
+
+Signed-off-by: Gustavo A. R. Silva <gustavoars@kernel.org>
+Link: https://lore.kernel.org/r/13b3e0a69aad837b4e32ca8269b9d91bf1fbe9ef.1758115257.git.gustavoars@kernel.org
+Signed-off-by: Kees Cook <kees@kernel.org>
+(cherry picked from commit 413187f79062634575098653c40f95d439d3b157)
+---
+ include/linux/stddef.h | 2 +-
+ 1 file changed, 1 insertion(+), 1 deletion(-)
+
+diff --git a/include/linux/stddef.h b/include/linux/stddef.h
+index dab49e2ec8c0a..701099c67c240 100644
+--- a/include/linux/stddef.h
++++ b/include/linux/stddef.h
+@@ -108,7 +108,7 @@ enum {
+ 	union {									\
+ 		TYPE NAME;							\
+ 		struct {							\
+-			unsigned char __offset_to_##FAM[offsetof(TYPE, FAM)];	\
++			unsigned char __offset_to_FAM[offsetof(TYPE, FAM)];	\
+ 			MEMBERS							\
+ 		};								\
+ 	}
+-- 
+2.43.0
+

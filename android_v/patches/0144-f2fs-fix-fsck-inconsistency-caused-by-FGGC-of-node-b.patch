@@ -1,0 +1,125 @@
+From 4394592b05bad37ddd7460056e90ada6644638ef Mon Sep 17 00:00:00 2001
+From: Yongpeng Yang <yangyongpeng@xiaomi.com>
+Date: Wed, 18 Mar 2026 16:45:34 +0800
+Subject: [PATCH 144/218] f2fs: fix fsck inconsistency caused by FGGC of node
+ block
+
+commit c3e238bd1f56993f205ef83889d406dfeaf717a8 upstream.
+
+During FGGC node block migration, fsck may incorrectly treat the
+migrated node block as fsync-written data.
+
+The reproduction scenario:
+root@vm:/mnt/f2fs# seq 1 2048 | xargs -n 1 ./test_sync // write inline inode and sync
+root@vm:/mnt/f2fs# rm -f 1
+root@vm:/mnt/f2fs# sync
+root@vm:/mnt/f2fs# f2fs_io gc_range // move data block in sync mode and not write CP
+  SPO, "fsck --dry-run" find inode has already checkpointed but still
+  with DENT_BIT_SHIFT set
+
+The root cause is that GC does not clear the dentry mark and fsync mark
+during node block migration, leading fsck to misinterpret them as
+user-issued fsync writes.
+
+In BGGC mode, node block migration is handled by f2fs_sync_node_pages(),
+which guarantees the dentry and fsync marks are cleared before writing.
+
+This patch move the set/clear of the fsync|dentry marks into
+__write_node_folio to make the logic clearer, and ensures the
+fsync|dentry mark is cleared in FGGC.
+
+Cc: stable@kernel.org
+Fixes: da011cc0da8c ("f2fs: move node pages only in victim section during GC")
+Signed-off-by: Yongpeng Yang <yangyongpeng@xiaomi.com>
+Reviewed-by: Chao Yu <chao@kernel.org>
+Signed-off-by: Jaegeuk Kim <jaegeuk@kernel.org>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+(cherry picked from commit 8be551f538dc5b64183e27bd45a7a0795263f760)
+---
+ fs/f2fs/node.c | 27 +++++++++++++--------------
+ 1 file changed, 13 insertions(+), 14 deletions(-)
+
+diff --git a/fs/f2fs/node.c b/fs/f2fs/node.c
+index e4edd0f7a5ef1..111211c3484c4 100644
+--- a/fs/f2fs/node.c
++++ b/fs/f2fs/node.c
+@@ -1681,9 +1681,10 @@ static struct folio *last_fsync_dnode(struct f2fs_sb_info *sbi, nid_t ino)
+ 	return last_folio;
+ }
+ 
+-static int __write_node_page(struct page *page, bool atomic, bool *submitted,
+-				struct writeback_control *wbc, bool do_balance,
+-				enum iostat_type io_type, unsigned int *seq_id)
++static int __write_node_page(struct page *page, bool atomic, bool do_fsync,
++				bool *submitted, struct writeback_control *wbc,
++				bool do_balance, enum iostat_type io_type,
++				unsigned int *seq_id)
+ {
+ 	struct f2fs_sb_info *sbi = F2FS_P_SB(page);
+ 	struct folio *folio = page_folio(page);
+@@ -1757,6 +1758,8 @@ static int __write_node_page(struct page *page, bool atomic, bool *submitted,
+ 	if (atomic && !test_opt(sbi, NOBARRIER))
+ 		fio.op_flags |= REQ_PREFLUSH | REQ_FUA;
+ 
++	set_dentry_mark(page, false);
++	set_fsync_mark(page, do_fsync);
+ 	if (IS_INODE(page) && (atomic || is_fsync_dnode(page)))
+ 		set_dentry_mark(page,
+ 				f2fs_need_dentry_mark(sbi, ino_of_node(page)));
+@@ -1819,7 +1822,7 @@ int f2fs_move_node_page(struct page *node_page, int gc_type)
+ 			goto out_page;
+ 		}
+ 
+-		if (__write_node_page(node_page, false, NULL,
++		if (__write_node_page(node_page, false, false, NULL,
+ 					&wbc, false, FS_GC_NODE_IO, NULL)) {
+ 			err = -EAGAIN;
+ 			unlock_page(node_page);
+@@ -1867,6 +1870,7 @@ int f2fs_fsync_node_pages(struct f2fs_sb_info *sbi, struct inode *inode,
+ 		for (i = 0; i < nr_folios; i++) {
+ 			struct folio *folio = fbatch.folios[i];
+ 			bool submitted = false;
++			bool do_fsync = false;
+ 
+ 			if (unlikely(f2fs_cp_error(sbi))) {
+ 				f2fs_folio_put(last_folio, false);
+@@ -1897,11 +1901,8 @@ int f2fs_fsync_node_pages(struct f2fs_sb_info *sbi, struct inode *inode,
+ 
+ 			f2fs_folio_wait_writeback(folio, NODE, true, true);
+ 
+-			set_fsync_mark(&folio->page, 0);
+-			set_dentry_mark(&folio->page, 0);
+-
+ 			if (!atomic || folio == last_folio) {
+-				set_fsync_mark(&folio->page, 1);
++				do_fsync = true;
+ 				percpu_counter_inc(&sbi->rf_node_block_count);
+ 				if (IS_INODE(&folio->page)) {
+ 					if (is_inode_flag_set(inode,
+@@ -1918,7 +1919,7 @@ int f2fs_fsync_node_pages(struct f2fs_sb_info *sbi, struct inode *inode,
+ 
+ 			ret = __write_node_page(&folio->page, atomic &&
+ 						folio == last_folio,
+-						&submitted, wbc, true,
++						do_fsync, &submitted, wbc, true,
+ 						FS_NODE_IO, seq_id);
+ 			if (ret) {
+ 				folio_unlock(folio);
+@@ -2121,11 +2122,9 @@ int f2fs_sync_node_pages(struct f2fs_sb_info *sbi,
+ 			if (!folio_clear_dirty_for_io(folio))
+ 				goto continue_unlock;
+ 
+-			set_fsync_mark(&folio->page, 0);
+-			set_dentry_mark(&folio->page, 0);
+-
+-			ret = __write_node_page(&folio->page, false, &submitted,
+-						wbc, do_balance, io_type, NULL);
++			ret = __write_node_page(&folio->page, false, false,
++						&submitted, wbc, do_balance,
++						io_type, NULL);
+ 			if (ret)
+ 				folio_unlock(folio);
+ 			else if (submitted)
+-- 
+2.43.0
+

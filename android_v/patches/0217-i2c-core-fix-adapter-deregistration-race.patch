@@ -1,0 +1,61 @@
+From 2c45cea7440c7b981eda411808a3cbe7d5017091 Mon Sep 17 00:00:00 2001
+From: Johan Hovold <johan@kernel.org>
+Date: Mon, 11 May 2026 16:37:13 +0200
+Subject: [PATCH 217/218] i2c: core: fix adapter deregistration race
+
+commit b1a58ed9eab146b36f41a55db8f5d7ce9fdedf3f upstream.
+
+Adapters can be looked up by their id using i2c_get_adapter() which
+takes a reference to the embedded struct device.
+
+Remove the adapter from the IDR before tearing it down during
+deregistration (and on registration failure) to make sure its resources
+are not accessed after having been freed (e.g. the device name).
+
+Fixes: 35fc37f81881 ("i2c: Limit core locking to the necessary sections")
+Cc: stable@vger.kernel.org	# 2.6.31
+Cc: Jean Delvare <khali@linux-fr.org>
+Signed-off-by: Johan Hovold <johan@kernel.org>
+Signed-off-by: Wolfram Sang <wsa+renesas@sang-engineering.com>
+Signed-off-by: Greg Kroah-Hartman <gregkh@linuxfoundation.org>
+(cherry picked from commit 21318e688e5422d8007150278f6244327ea59eb0)
+---
+ drivers/i2c/i2c-core-base.c | 8 ++++++++
+ 1 file changed, 8 insertions(+)
+
+diff --git a/drivers/i2c/i2c-core-base.c b/drivers/i2c/i2c-core-base.c
+index e8fd122e88c50..075e8e5bedc4d 100644
+--- a/drivers/i2c/i2c-core-base.c
++++ b/drivers/i2c/i2c-core-base.c
+@@ -1566,6 +1566,9 @@ static int i2c_register_adapter(struct i2c_adapter *adap)
+ 	res = device_add(&adap->dev);
+ 	if (res) {
+ 		pr_err("adapter '%s': can't register device (%d)\n", adap->name, res);
++		mutex_lock(&core_lock);
++		idr_replace(&i2c_adapter_idr, NULL, adap->nr);
++		mutex_unlock(&core_lock);
+ 		goto err_put_adap;
+ 	}
+ 
+@@ -1597,6 +1600,9 @@ static int i2c_register_adapter(struct i2c_adapter *adap)
+ 	return 0;
+ 
+ out_reg:
++	mutex_lock(&core_lock);
++	idr_replace(&i2c_adapter_idr, NULL, adap->nr);
++	mutex_unlock(&core_lock);
+ 	debugfs_remove_recursive(adap->debugfs);
+ 	device_del(&adap->dev);
+ err_put_adap:
+@@ -1756,6 +1762,8 @@ void i2c_del_adapter(struct i2c_adapter *adap)
+ 	/* First make sure that this adapter was ever added */
+ 	mutex_lock(&core_lock);
+ 	found = idr_find(&i2c_adapter_idr, adap->nr);
++	if (found == adap)
++		idr_replace(&i2c_adapter_idr, NULL, adap->nr);
+ 	mutex_unlock(&core_lock);
+ 	if (found != adap) {
+ 		pr_debug("attempting to delete unregistered adapter [%s]\n", adap->name);
+-- 
+2.43.0
+
