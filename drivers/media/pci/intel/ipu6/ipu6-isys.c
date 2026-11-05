@@ -159,16 +159,13 @@ static int isys_isr_one(struct ipu6_bus_device *adev);
 static int
 isys_complete_ext_device_registration(struct ipu6_isys *isys,
 				      struct v4l2_subdev *sd,
-				      s16 src_pad,
 				      struct ipu6_isys_csi2_config *csi2)
 {
 	struct device *dev = &isys->adev->auxdev.dev;
 	int source_pad;
 	int ret;
 
-	if (src_pad >= 0) {
-		source_pad = src_pad;
-	} else if (csi2->ep) {
+	if (csi2->ep) {
 		struct fwnode_handle *ep_source;
 
 		ep_source = fwnode_graph_get_remote_endpoint(csi2->ep);
@@ -282,8 +279,7 @@ static int isys_register_ext_subdev(struct ipu6_isys *isys,
 	if (!sd_info->csi2)
 		return 0;
 
-	/* src_pad is useless for non MIPI split case. Set it to '-1'.*/
-	return isys_complete_ext_device_registration(isys, sd, -1, sd_info->csi2);
+	return isys_complete_ext_device_registration(isys, sd, sd_info->csi2);
 
 skip_put_adapter:
 	i2c_put_adapter(adapter);
@@ -1017,9 +1013,7 @@ static int isys_notifier_bound(struct v4l2_async_notifier *notifier,
 
 	dev_dbg(&isys->adev->auxdev.dev, "bind %s nlanes is %d port is %d\n",
 		sd->name, s_asd->csi2.nlanes, s_asd->csi2.port);
-	ret = isys_complete_ext_device_registration(isys, sd,
-						    asc->match.src_pad,
-						    &s_asd->csi2);
+	ret = isys_complete_ext_device_registration(isys, sd, &s_asd->csi2);
 	if (ret)
 		return ret;
 
