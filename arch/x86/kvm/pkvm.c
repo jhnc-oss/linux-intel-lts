@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-2.0
+#include <linux/acpi.h>
+#include <linux/dmi.h>
 #include <linux/kvm_host.h>
 #include <linux/memblock.h>
 #include <linux/module.h>
 #include <linux/sort.h>
+#include <asm/e820/api.h>
 #include <asm/kvm_pkvm.h>
 
 /* Kernel command-line parameter */
@@ -16,6 +19,8 @@ static unsigned int pkvm_memblock_nr;
 
 phys_addr_t pkvm_mem_base;
 phys_addr_t pkvm_mem_size;
+phys_addr_t pkvm_mem32_base;
+phys_addr_t pkvm_mem32_size;
 
 bool pvmfw_present;
 phys_addr_t pvmfw_base;
@@ -88,6 +93,22 @@ void __init pkvm_reserve(void)
 
 	kvm_info("Reserved %lld MiB at 0x%llx for pkvm\n", pkvm_mem_size >> 20,
 		 pkvm_mem_base);
+
+	pkvm_mem32_size = pkvm_gsmi_pages() << PAGE_SHIFT;
+	pkvm_mem32_base = memblock_phys_alloc_range(pkvm_mem32_size, PAGE_SIZE,
+						    0, U32_MAX);
+	if (!pkvm_mem32_base) {
+		kvm_err("Failed to reserve pkvm 32-bit memory\n");
+
+		/* All or nothing, to keep things simple. */
+		memblock_phys_free(pkvm_mem_base, pkvm_mem_size);
+		pkvm_mem_base = 0;
+
+		return;
+	}
+
+	kvm_info("Reserved %lld KiB at 0x%llx for pkvm\n", pkvm_mem32_size >> 10,
+		 pkvm_mem32_base);
 }
 
 static phys_addr_t kvm_host_pa(void *addr)
@@ -184,4 +205,200 @@ int pkvm_vm_ioctl_enable_cap(struct kvm *kvm, struct kvm_enable_cap *cap)
 	default:
 		return -EINVAL;
 	}
+}
+
+struct pkvm_ramoops_console_info {
+	phys_addr_t start;
+	size_t size;
+};
+
+/*
+ * Console offset needs to be calculated manually since ACPI only provides the
+ * overall region boundaries. Offset of the Console is effectively the size of
+ * Dmesg area.
+ *
+ * Below definitions based on drivers/platform/chrome/chromeos_pstore.c:
+ */
+#define GOOG9999_RAMOOPS_PMSG_SIZE    0x20000
+#define GOOG9999_RAMOOPS_FTRACE_SIZE  0x20000
+#define GOOG9999_RAMOOPS_CONSOLE_SIZE 0x20000
+
+#define GOOG9999_RAMOOPS_NON_DMESG_SIZE \
+	(GOOG9999_RAMOOPS_PMSG_SIZE + \
+	 GOOG9999_RAMOOPS_FTRACE_SIZE + \
+	 GOOG9999_RAMOOPS_CONSOLE_SIZE)
+
+/* The combined size of the fixed partitions at the end of the region */
+#define GOOG9999_RAMOOPS_DMESG_SIZE(total_size) \
+	((total_size) - GOOG9999_RAMOOPS_NON_DMESG_SIZE)
+
+static void update_cros_ramoops_console_info(struct pkvm_ramoops_console_info *info,
+					     struct resource_entry *rentry)
+{
+	size_t console_offset;
+	size_t ramoops_size = resource_size(rentry->res);
+
+	/*
+	 * Note: The ChromeOS ramoops layout (for GOOG9999) partitions the
+	 * memory region as:
+	 * [Dmesg Area] [Console (128KB)] [Pmsg (128KB)] [Ftrace (128KB)]
+	 *
+	 * Since ramoops must recover logs across hardware resets and different
+	 * kernel versions, this layout should be stable and has remained
+	 * invariant for over a decade (chromeos_pstore.c's
+	 * chromeos_ramoops_data hasn't changed for a decade).
+	 *
+	 * The console buffer is located 3 slots (384KB) before the end of the
+	 * total region.
+	 */
+	if (ramoops_size >= GOOG9999_RAMOOPS_NON_DMESG_SIZE) {
+		console_offset = GOOG9999_RAMOOPS_DMESG_SIZE(ramoops_size);
+		info->start = rentry->res->start + console_offset;
+		info->size = GOOG9999_RAMOOPS_CONSOLE_SIZE;
+	}
+}
+
+static int find_cros_ramoops(struct pkvm_ramoops_console_info *info)
+{
+	struct acpi_device *adev;
+	LIST_HEAD(resource_list);
+	struct resource_entry *rentry;
+	int ret = -ENODEV;
+
+	adev = acpi_dev_get_first_match_dev("GOOG9999", NULL, -1);
+	if (!adev)
+		return ret;
+
+	if (acpi_dev_get_resources(adev, &resource_list, NULL, NULL) < 0)
+		goto out;
+
+	list_for_each_entry(rentry, &resource_list, node) {
+		if (resource_type(rentry->res) == IORESOURCE_MEM) {
+			update_cros_ramoops_console_info(info, rentry);
+			ret = 0;
+			break;
+		}
+	}
+	acpi_dev_free_resource_list(&resource_list);
+
+out:
+	acpi_dev_put(adev);
+
+	return ret;
+}
+
+static void find_ramoops(struct pkvm_ramoops_console_info *info)
+{
+	/*
+	 * Try chromeos pstore ramoops first.
+	 *
+	 * TODO: currently supporting only ACPI GOOG9999 chromeos_pstore but it can
+	 * be extended to other pstores like ramoops cmdline options.
+	 */
+	if (!find_cros_ramoops(info))
+		return;
+}
+
+void __init pkvm_ramoops_init(void)
+{
+	struct pkvm_ramoops_console_info r_info = {};
+
+	find_ramoops(&r_info);
+	if (r_info.start && r_info.size) {
+		phys_addr_t end = r_info.start + r_info.size - 1;
+		phys_addr_t pvmfw_end = pvmfw_base + pvmfw_size - 1;
+
+		if (pvmfw_present && (r_info.start <= pvmfw_end) && (pvmfw_base <= end)) {
+			pr_err("ramoops [0x%llx-0x%llx] overlaps with pvmfw region\n",
+			       r_info.start, end);
+			return;
+		}
+
+		if (!e820__mapped_all(r_info.start, end, E820_TYPE_RESERVED)) {
+			pr_err("ramoops [0x%llx-0x%llx] is not reserved in e820\n",
+			       r_info.start, end);
+			return;
+		}
+
+		if (!PAGE_ALIGNED(r_info.start) || !PAGE_ALIGNED(r_info.size)) {
+			pr_err("ramoops [0x%llx-0x%llx] is not page-aligned\n",
+			       r_info.start, end);
+			return;
+		}
+
+		pkvm_sym(pkvm_ramoops_console_pa) = r_info.start;
+		pkvm_sym(pkvm_ramoops_console_size) = r_info.size;
+	}
+}
+
+/* Copied from drivers/firmware/google/gsmi.c */
+static const struct dmi_system_id gsmi_dmi_table[] __initconst = {
+	{
+		.ident = "Google Board",
+		.matches = {
+			DMI_MATCH(DMI_BOARD_VENDOR, "Google, Inc."),
+		},
+	},
+	{
+		.ident = "Coreboot Firmware",
+		.matches = {
+			DMI_MATCH(DMI_BIOS_VENDOR, "coreboot"),
+		},
+	},
+	{}
+};
+
+int __init pkvm_gsmi_init(void)
+{
+	u16 cmd, result;
+
+	/*
+	 * Probe the GSMI handler in firmware. See gsmi_system_valid() in
+	 * drivers/firmware/google/gsmi.c as a reference.
+	 */
+	if (!dmi_check_system(gsmi_dmi_table))
+		return 0;
+
+	if (!acpi_gbl_FADT.smi_command || acpi_gbl_FADT.smi_command > U16_MAX) {
+		pr_err("pkvm: invalid smi command port 0x%x\n",
+		       acpi_gbl_FADT.smi_command);
+		return -EINVAL;
+	}
+
+	/*
+	 * Combine the initial probe with querying the handshake type. We can do
+	 * that, since we require the simple GSMI_HANDSHAKE_NONE protocol anyway.
+	 *
+	 * Don't bother using the GSMI_HANDSHAKE_SPIN quirk for this initial query.
+	 * Coreboot has always been advertising GSMI_HANDSHAKE_NONE support,
+	 * since 2012 when GSMI support was first implemented in coreboot, which
+	 * suggests that SPIN was only required on some ancient pre-coreboot
+	 * Chromebooks. Also, GSMI driver's gsmi_system_valid() doesn't use SPIN
+	 * for the initial probe either, it only historically uses it when
+	 * querying the handshake type after that.
+	 */
+	cmd = GSMI_CALLBACK | (GSMI_CMD_HANDSHAKE_TYPE << 8);
+	asm volatile(
+		"outb %%al, %%dx\n"
+		: "=a" (result)
+		: "0" (cmd),
+		  "d" (acpi_gbl_FADT.smi_command)
+		: "memory", "cc"
+		);
+
+	/* If %ax is left untouched, there is no GSMI handler. */
+	if (result == cmd)
+		return 0;
+
+	if (result != GSMI_HANDSHAKE_NONE) {
+		pr_err("pkvm: unsupported gsmi handshake 0x%x\n", result);
+		return -EOPNOTSUPP;
+	}
+
+	pkvm_sym(gsmi_present) = true;
+	pkvm_sym(smi_command_port) = acpi_gbl_FADT.smi_command;
+	pkvm_sym(pkvm_gsmi_mem_base) = pkvm_mem32_base;
+	pkvm_sym(pkvm_gsmi_mem_size) = pkvm_mem32_size;
+
+	return 0;
 }

@@ -6,6 +6,8 @@
 #include <linux/extable.h>
 #include <asm/e820/api.h>
 #include <asm/pkvm_image.h>
+#include <asm/setup.h>
+#include <asm/set_memory.h>
 #include "pkvm_constants.h"
 #include "vmx.h"
 #include "pkvm_iommu.h"
@@ -51,12 +53,9 @@ static int __init early_pvmfw_parse_cmdline(char *buf)
 early_param("pvmfw", early_pvmfw_parse_cmdline);
 
 static DEFINE_PER_CPU(struct vmcs *, pkvm_vmxarea);
+static DEFINE_PER_CPU(struct pkvm_pcpu*, pkvm_pcpu);
+static DEFINE_PER_CPU(struct kvm_vcpu*, host_vcpu);
 static unsigned long data_pages;
-
-struct pkvm_deprivilege_param {
-	struct pkvm_hyp *pkvm;
-	int ret;
-};
 
 /* Only need GDT entries for KERNEL_CS & KERNEL_DS as pKVM only use these two */
 static struct gdt_page pkvm_gdt_page = {
@@ -70,6 +69,14 @@ static unsigned int intercept_w_msrs[] = {
 	MSR_CORE_PERF_GLOBAL_CTRL,
 	MSR_IA32_APICBASE,
 	X2APIC_MSR(APIC_ID),
+	MSR_IA32_XSS,
+	/* User-return MSRs (except MSR_EFER which is isolated via VMCS): */
+	MSR_SYSCALL_MASK,
+	MSR_LSTAR,
+	MSR_CSTAR,
+	MSR_TSC_AUX,
+	MSR_STAR,
+	MSR_IA32_TSX_CTRL,
 };
 
 u64 pkvm_total_reserve_pages(void)
@@ -95,6 +102,7 @@ static __init void pkvm_setup_syms(void)
 	 */
 	pkvm_sym(page_offset_base) = page_offset_base;
 	pkvm_sym(phys_base) = phys_base;
+	pkvm_sym(kaslr_offset_val) = kaslr_offset();
 
 	/*
 	 * For the pKVM hypervisor to leverage the boot_cpu_has macro to check
@@ -116,6 +124,7 @@ static __init void pkvm_setup_syms(void)
 #endif
 	cpumask_copy(&pkvm_sym(__cpu_possible_mask), cpu_possible_mask);
 	pkvm_sym(nr_cpu_ids) = nr_cpu_ids;
+	pkvm_sym(msi_dest_mode_logical) = apic->dest_mode_logical;
 	pkvm_sym(fpu_kernel_cfg) = fpu_kernel_cfg;
 	pkvm_sym(fpu_user_cfg) = fpu_user_cfg;
 #ifdef CONFIG_X86_64
@@ -138,6 +147,7 @@ static __init int pkvm_setup_host_vmcs_config(void)
 	struct vmcs_config_setting setting = {
 		.cpu_based_vm_exec_ctrl_req =
 			CPU_BASED_INTR_WINDOW_EXITING |
+			CPU_BASED_USE_IO_BITMAPS |
 			CPU_BASED_USE_MSR_BITMAPS |
 			CPU_BASED_ACTIVATE_SECONDARY_CONTROLS,
 		.cpu_based_vm_exec_ctrl_opt = 0,
@@ -263,6 +273,15 @@ static __init int pkvm_setup_host_vm(struct pkvm_hyp *pkvm)
 		return -ENOMEM;
 	}
 
+	kvmx->io_bitmap = pkvm_sym(pkvm_early_alloc_contig)(2);
+	if (!kvmx->io_bitmap) {
+		pr_err("no io_bitmap pages\n");
+		return -ENOMEM;
+	}
+
+	if (pkvm_sym(gsmi_present))
+		__set_bit(pkvm_sym(smi_command_port), kvmx->io_bitmap);
+
 	kvmx->kvm.arch.pkvm.handle = PKVM_HOST_VM_HANDLE;
 	/*
 	 * Only a few fields in the kvm structure will be used, e.g.,
@@ -351,7 +370,7 @@ static __init void init_tss(struct pkvm_pcpu *pcpu)
 	write_gdt_entry(d, GDT_ENTRY_TSS, &tss, DESC_TSS);
 }
 
-static __init int pkvm_setup_pcpu(struct pkvm_hyp *pkvm, int cpu)
+static __init int pkvm_setup_pcpu(int cpu)
 {
 	struct pkvm_pcpu *pcpu;
 	int ret;
@@ -371,18 +390,21 @@ static __init int pkvm_setup_pcpu(struct pkvm_hyp *pkvm, int cpu)
 	init_idt(pcpu);
 	init_tss(pcpu);
 
-	pkvm->pcpus[cpu] = pcpu;
-
 	ret = pkvm_alloc_vmxarea(cpu);
-	if (ret)
+	if (ret) {
 		pr_err("alloc vmxarea for CPU%d failed with ret %d\n", cpu, ret);
+		return ret;
+	}
 
+	pcpu->apic_id = per_cpu(x86_cpu_to_apicid, cpu);
+	pcpu->msi_dest_id = apic->calc_dest_apicid(cpu);
+	pcpu->cpu = cpu;
+	per_cpu(pkvm_pcpu, cpu) = pcpu;
 	return 0;
 }
 
-static __init int pkvm_setup_host_vcpu(struct pkvm_hyp *pkvm, int cpu)
+static __init int pkvm_setup_host_vcpu(struct kvm *kvm, int cpu)
 {
-	struct kvm *kvm = pkvm->host_kvm;
 	struct vcpu_vmx *vmx;
 
 	if (cpu >= CONFIG_NR_CPUS) {
@@ -416,13 +438,15 @@ static __init int pkvm_setup_host_vcpu(struct pkvm_hyp *pkvm, int cpu)
 	vmx->vcpu.vcpu_id = kvm->created_vcpus;
 	vmx->vcpu.kvm = kvm;
 	kvm->created_vcpus++;
-	pkvm->host_vcpus[cpu] = &vmx->vcpu;
 
+	per_cpu(host_vcpu, cpu) = &vmx->vcpu;
 	return 0;
 }
 
-static __init int pkvm_setup_per_cpu(struct pkvm_hyp *pkvm, int cpu)
+static __init int pkvm_setup_per_cpu(int cpu)
 {
+	struct pkvm_pcpu *pcpu = per_cpu(pkvm_pcpu, cpu);
+	struct kvm_vcpu *vcpu = per_cpu(host_vcpu, cpu);
 #ifndef CONFIG_PKVM_X86_DEBUG
 	unsigned int nr_pages;
 	void *per_cpu_base;
@@ -439,7 +463,8 @@ static __init int pkvm_setup_per_cpu(struct pkvm_hyp *pkvm, int cpu)
 		return 0;
 
 	per_cpu_base = pkvm_sym(pkvm_early_alloc_contig)(nr_pages);
-	if (!per_cpu_base || pkvm_sym(pkvm_setup_per_cpu)(cpu, __pa(per_cpu_base))) {
+	if (!per_cpu_base || pkvm_sym(pkvm_setup_per_cpu)(cpu, __pa(per_cpu_base),
+				      __pa(pcpu), __pa(vcpu))) {
 		pr_err("no percpu page for CPU%d\n", cpu);
 		return -ENOMEM;
 	}
@@ -449,13 +474,24 @@ static __init int pkvm_setup_per_cpu(struct pkvm_hyp *pkvm, int cpu)
 	 * as the same percpu base will be used by the pKVM and the host in the
 	 * debug build.
 	 */
-	if (pkvm_sym(pkvm_setup_per_cpu)(cpu, __pa(__per_cpu_offset[cpu]))) {
+	if (pkvm_sym(pkvm_setup_per_cpu)(cpu, __per_cpu_offset[cpu],
+					 __pa(pcpu), __pa(vcpu))) {
 		pr_err("no percpu page for CPU%d\n", cpu);
 		return -ENOMEM;
 	}
 #endif
 
 	return 0;
+}
+
+static bool mitigate_eibrs_pbrsb(void)
+{
+	/*
+	 * Make sure FILL_RETURN_BUFFER in vmx/vmenter.S has been patched
+	 * to fill RSB after vmexit.
+	 */
+	return boot_cpu_has(X86_FEATURE_RSB_VMEXIT_LITE) ||
+	       boot_cpu_has(X86_FEATURE_RSB_VMEXIT);
 }
 
 static bool mitigate_spectre_v2(struct cpuinfo_x86 *c)
@@ -471,8 +507,8 @@ static bool mitigate_spectre_v2(struct cpuinfo_x86 *c)
 		return false;
 
 	if (boot_cpu_has_bug(X86_BUG_EIBRS_PBRSB)) {
-		/* Fill RSB after vmexit */
-		set_cpu_cap(&pkvm_sym(boot_cpu_data), X86_FEATURE_RSB_VMEXIT_LITE);
+		if (!mitigate_eibrs_pbrsb())
+			return false;
 
 		clear_bit(X86_BUG_EIBRS_PBRSB, (unsigned long *)c->x86_capability);
 		pr_info("mitigated eibrs_pbrsb when mitigating spectre_v2\n");
@@ -551,21 +587,16 @@ static bool mitigate_bhi(void)
 	return true;
 }
 
-static bool mitigate_eibrs_pbrsb(void)
-{
-	/* Fill RSB after vmexit */
-	set_cpu_cap(&pkvm_sym(boot_cpu_data), X86_FEATURE_RSB_VMEXIT_LITE);
-
-	return true;
-}
-
 static bool mitigate_rfds(void)
 {
 	if (!(x86_read_arch_cap_msr() & ARCH_CAP_RFDS_CLEAR))
 		return false;
 
-	set_cpu_cap(&pkvm_sym(boot_cpu_data), X86_FEATURE_CLEAR_CPU_BUF);
-	return true;
+	/*
+	 * Make sure CLEAR_CPU_BUFFERS has been patched to clear CPU register file
+	 * via VERW.
+	 */
+	return boot_cpu_has(X86_FEATURE_CLEAR_CPU_BUF);
 }
 
 static bool mitigate_vmscape(struct cpuinfo_x86 *c)
@@ -619,7 +650,7 @@ static bool mitigate_vmscape(struct cpuinfo_x86 *c)
  * Set SPEC_CTRL_BHI_DIS_S in spec ctrl MSR to mitigate BHI bug.
  *
  * 7) X86_BUG_EIBRS_PBRSB.
- * Fill RSB after vmexit.
+ * Requires SW sequence to fill RSB after vmexit.
  *
  * 8) X86_BUG_RFDS.
  * Requires ARCH_CAP_RFDS_CLEAR to clears CPU register file via VERW.
@@ -876,11 +907,11 @@ static __init void init_guest_state_area(struct vcpu_vmx *vmx)
 	vmcs_write64(VMCS_LINK_POINTER, -1ull);
 }
 
-static __init void init_host_state_area(struct vcpu_vmx *vmx, struct pkvm_hyp *pkvm)
+static __init void init_host_state_area(struct vcpu_vmx *vmx)
 {
+	struct pkvm_pcpu *pcpu = this_cpu_read(pkvm_pcpu);
 	int cpu = smp_processor_id();
 	unsigned long host_rsp;
-	struct pkvm_pcpu *pcpu;
 #ifdef CONFIG_PKVM_X86_DEBUG
 	struct desc_ptr dt;
 	u16 selector;
@@ -930,7 +961,6 @@ static __init void init_host_state_area(struct vcpu_vmx *vmx, struct pkvm_hyp *p
 	 * Use pKVM's exception handlers, to minimize differences from
 	 * non-debug mode.
 	 */
-	pcpu = pkvm->pcpus[cpu];
 	vmcs_writel(HOST_IDTR_BASE, (unsigned long)(&pcpu->idt_page));
 
 	rdmsrq(MSR_IA32_SYSENTER_CS, msrq);
@@ -952,7 +982,6 @@ static __init void init_host_state_area(struct vcpu_vmx *vmx, struct pkvm_hyp *p
 	vmcs_writel(HOST_FS_BASE, 0);
 	vmcs_writel(HOST_GS_BASE, pkvm_sym(pkvm_per_cpu_offset)(cpu));
 
-	pcpu = pkvm->pcpus[cpu];
 	vmcs_writel(HOST_TR_BASE, (unsigned long)&pcpu->tss);
 	vmcs_writel(HOST_GDTR_BASE, (unsigned long)(&pcpu->gdt_page));
 	vmcs_writel(HOST_IDTR_BASE, (unsigned long)(&pcpu->idt_page));
@@ -1007,6 +1036,8 @@ static __init void init_host_state_area(struct vcpu_vmx *vmx, struct pkvm_hyp *p
 
 static __init void init_execution_control(struct vcpu_vmx *vmx)
 {
+	struct kvm_vmx *kvmx = to_kvm_vmx(vmx->vcpu.kvm);
+
 	/* Preemption timer is toggled dynamically */
 	pin_controls_set(vmx, pkvm_sym(host_vmcs_config).pin_based_exec_ctrl &
 			      ~PIN_BASED_VMX_PREEMPTION_TIMER);
@@ -1035,12 +1066,6 @@ static __init void init_execution_control(struct vcpu_vmx *vmx)
 	if (boot_cpu_has(X86_FEATURE_INTEL_PT))
 		secondary_exec_controls_clearbit(vmx, SECONDARY_EXEC_PT_USE_GPA);
 
-	/*
-	 * Shadow VMCS will not be used as the VMCS will be exposed via PV-based
-	 * method.
-	 */
-	vmcs_write64(VMCS_LINK_POINTER, INVALID_GPA);
-
 	/* Host VM owns cr3 */
 	vmcs_write32(CR3_TARGET_COUNT, 0);
 
@@ -1048,6 +1073,9 @@ static __init void init_execution_control(struct vcpu_vmx *vmx)
 	vmcs_write32(EXCEPTION_BITMAP, 0);
 
 	vmcs_write64(MSR_BITMAP, __pa(vmx->vmcs01.msr_bitmap));
+
+	vmcs_write64(IO_BITMAP_A, __pa(kvmx->io_bitmap));
+	vmcs_write64(IO_BITMAP_B, __pa((u8 *)kvmx->io_bitmap + PAGE_SIZE));
 
 	/*
 	 * Host VM owns cr0 and cr4 except VMXE bit.
@@ -1111,17 +1139,17 @@ static __init void init_vmentry_control(struct vcpu_vmx *vmx)
 	vm_entry_controls_set(vmx, vmentry_ctrl);
 	vmcs_write32(VM_ENTRY_INTR_INFO_FIELD, 0);
 	vmcs_write32(VM_ENTRY_MSR_LOAD_COUNT, 0);
-	vmcs_write32(VM_ENTRY_INTR_INFO_FIELD, 0);
 }
 
-static __init int pkvm_host_init_vmx(struct vcpu_vmx *vmx, struct pkvm_hyp *pkvm)
+static __init int pkvm_host_init_vmx(struct vcpu_vmx *vmx)
 {
 	vmx->loaded_vmcs = &vmx->vmcs01;
+	vmcs_clear(vmx->loaded_vmcs->vmcs);
 	vmcs_load(vmx->loaded_vmcs->vmcs);
 	vmx->loaded_vmcs->cpu = smp_processor_id();
 
 	init_guest_state_area(vmx);
-	init_host_state_area(vmx, pkvm);
+	init_host_state_area(vmx);
 	init_execution_control(vmx);
 	init_vmexit_control(vmx);
 	init_vmentry_control(vmx);
@@ -1160,16 +1188,11 @@ static noinline int local_deprivilege_cpu(void)
 static DEFINE_PER_CPU(bool, deprivileged);
 static __init void pkvm_host_reprivilege_cpu(void *data)
 {
-	unsigned long flags;
-	int cpu = get_cpu();
+	int cpu = smp_processor_id();
 	int ret;
 
-	if (!this_cpu_read(deprivileged)) {
-		put_cpu();
+	if (!this_cpu_read(deprivileged))
 		return;
-	}
-
-	local_irq_save(flags);
 
 	/*
 	 * Load the RW GDT page for reprivilege code
@@ -1196,12 +1219,9 @@ static __init void pkvm_host_reprivilege_cpu(void *data)
 		this_cpu_write(deprivileged, false);
 		kvm_cpu_vmxoff();
 		pr_info("%s: CPU%d back in host mode\n", __func__, cpu);
-	} else {
-		pr_warn("%s: CPU%d failed to reprivilege(err=%d)\n", __func__, cpu, ret);
 	}
 
-	local_irq_restore(flags);
-	put_cpu();
+	*(int *)data = ret;
 }
 
 static __init void pkvm_host_reprivilege_cpus(void)
@@ -1209,24 +1229,23 @@ static __init void pkvm_host_reprivilege_cpus(void)
 	int cpu;
 
 	for_each_possible_cpu(cpu) {
+		int ret, reprivilege_ret = 0;
+
 		if (!per_cpu(deprivileged, cpu))
 			continue;
 
-		smp_call_function_single(cpu, pkvm_host_reprivilege_cpu,
-					 NULL, true);
+		ret = smp_call_function_single(cpu, pkvm_host_reprivilege_cpu,
+					       &reprivilege_ret, true);
+		if (ret || reprivilege_ret)
+			panic("CPU%d failed to reprivilege(smp_call=%d, reprivilege=%d)\n",
+			      cpu, ret, reprivilege_ret);
 	}
 }
 
 static __init void pkvm_host_deprivilege_cpu(void *data)
 {
-	struct pkvm_deprivilege_param *p = data;
-	int cpu = smp_processor_id(), ret;
-	struct kvm_vcpu *vcpu;
-
-	if (!p || !p->pkvm)
-		return;
-
-	vcpu = p->pkvm->host_vcpus[cpu];
+	int cpu = smp_processor_id(), *deprivilege_ret = data, ret;
+	struct kvm_vcpu *vcpu = this_cpu_read(host_vcpu);
 
 	ret = kvm_cpu_vmxon(__pa(this_cpu_read(pkvm_vmxarea)));
 	if (ret) {
@@ -1234,7 +1253,7 @@ static __init void pkvm_host_deprivilege_cpu(void *data)
 		goto done;
 	}
 
-	ret = pkvm_host_init_vmx(to_vmx(vcpu), p->pkvm);
+	ret = pkvm_host_init_vmx(to_vmx(vcpu));
 	if (ret) {
 		pr_err("CPU%d init vmx failed, ret %d\n", cpu, ret);
 		goto vmxoff;
@@ -1253,7 +1272,7 @@ static __init void pkvm_host_deprivilege_cpu(void *data)
 vmxoff:
 	kvm_cpu_vmxoff();
 done:
-	p->ret = ret;
+	*deprivilege_ret = ret;
 }
 
 /*
@@ -1261,11 +1280,7 @@ done:
  */
 static __init int pkvm_host_deprivilege_cpus(struct pkvm_hyp *pkvm)
 {
-	struct pkvm_deprivilege_param p = {
-		.pkvm = pkvm,
-		.ret = 0,
-	};
-	int cpu, ret = 0;
+	int cpu, ret = 0, deprivilege_ret = 0;
 
 	pkvm_sym(pkvm_vmx_register_excp_handlers)();
 
@@ -1280,15 +1295,16 @@ static __init int pkvm_host_deprivilege_cpus(struct pkvm_hyp *pkvm)
 		sort_extable(pkvm_sym(__start___ex_table), pkvm_sym(__stop___ex_table));
 
 	for_each_possible_cpu(cpu) {
-		ret = smp_call_function_single(cpu, pkvm_host_deprivilege_cpu, &p, 1);
-		if (ret || p.ret) {
+		ret = smp_call_function_single(cpu, pkvm_host_deprivilege_cpu,
+					       &deprivilege_ret, 1);
+		if (ret || deprivilege_ret) {
 			pr_err("Failed to deprivilege CPU%d: smp_call %d, deprivilege: %d\n",
-			       cpu, ret, p.ret);
+			       cpu, ret, deprivilege_ret);
 			break;
 		}
 	}
 
-	return ret ? ret : p.ret;
+	return ret ? ret : deprivilege_ret;
 }
 
 static void do_pkvm_hyp_init(void *data)
@@ -1307,6 +1323,13 @@ static void do_pkvm_hyp_init(void *data)
 			.va	= (unsigned long)__va(pkvm_mem_base + data_size),
 			.pa	= pkvm_mem_base + data_size,
 			.size	= pkvm_mem_size - data_size,
+			.prot	= pgprot_val(PAGE_KERNEL),
+		},
+		{
+			.type	= PKVM_RESERVED_USED_MEMORY,
+			.va	= (unsigned long)__va(pkvm_mem32_base),
+			.pa	= pkvm_mem32_base,
+			.size	= pkvm_mem32_size,
 			.prot	= pgprot_val(PAGE_KERNEL),
 		},
 		{
@@ -1425,6 +1448,12 @@ int __init vmx_pkvm_init(void)
 		return 0;
 	}
 
+	if (!tsc_khz) {
+		pr_err("TSC frequency not calibrated\n");
+		ret = -ENODEV;
+		goto out;
+	}
+
 	if (!pkvm_mem_base) {
 		pr_err("required memory not reserved\n");
 		ret = -ENOMEM;
@@ -1443,6 +1472,14 @@ int __init vmx_pkvm_init(void)
 
 	pkvm_setup_syms();
 
+	/*
+	 * Must be before pkvm_setup_host_vm(), since io_bitmap setup depends
+	 * on whether gsmi is present or not.
+	 */
+	ret = pkvm_gsmi_init();
+	if (ret)
+		goto out;
+
 	ret = pkvm_setup_host_vmcs_config();
 	if (ret) {
 		pr_err("setup host vmcs config failed\n");
@@ -1453,18 +1490,24 @@ int __init vmx_pkvm_init(void)
 	if (ret)
 		goto out;
 
-	pkvm->num_cpus = num_possible_cpus();
+	pkvm->num_cpus = 0;
 
 	for_each_possible_cpu(cpu) {
-		ret = pkvm_setup_pcpu(pkvm, cpu);
+		ret = pkvm_setup_pcpu(cpu);
 		if (ret)
 			goto out;
-		ret = pkvm_setup_host_vcpu(pkvm, cpu);
+
+		ret = pkvm_setup_host_vcpu(pkvm->host_kvm, cpu);
 		if (ret)
 			goto out;
-		ret = pkvm_setup_per_cpu(pkvm, cpu);
+
+		ret = pkvm_setup_per_cpu(cpu);
 		if (ret)
 			goto out;
+
+		pkvm->pcpus[pkvm->num_cpus] = per_cpu(pkvm_pcpu, cpu);
+		pkvm->host_vcpus[pkvm->num_cpus] = per_cpu(host_vcpu, cpu);
+		pkvm->num_cpus++;
 	}
 
 	/*
@@ -1489,6 +1532,8 @@ int __init vmx_pkvm_init(void)
 
 	pkvm_sym(init_ops) = pkvm_sym(pkvm_vmx_init_ops);
 
+	pkvm_ramoops_init();
+
 	ret = pkvm_host_deprivilege_cpus(pkvm);
 	if (ret)
 		goto repriv_cpus;
@@ -1503,6 +1548,26 @@ int __init vmx_pkvm_init(void)
 		static_branch_disable(&pkvm_enabled_key);
 		goto repriv_cpus;
 	}
+
+	/*
+	 * After host deprivileging succeed, un-present the kernel direct
+	 * mappings for the memory pages which are reserved from the memblock
+	 * for the pKVM as they are not accessible to the host kernel until the
+	 * platform is power cycled. This can avoid unnecessary EPT violation
+	 * vmexit for the usage of load_unaligned_zeropad().
+	 *
+	 * Note: The host memory pages donated to the pKVM are still mapped in
+	 * the host's MMU. Those pages are not un-presented right now because
+	 * they are sparse allocated from the linux, un-presenting from the
+	 * kernel direct mapping may split a huge PTE into smaller ones which
+	 * may slightly impact the host's performance. Without unpresenting for
+	 * those pages, the usage of load_unaligned_zeropad() can be supported
+	 * via injecting #PF by the pKVM.
+	 */
+	WARN_ON(set_memory_np((unsigned long)__va(pkvm_mem_base),
+			      pkvm_mem_size >> PAGE_SHIFT));
+	WARN_ON(set_memory_np((unsigned long)__va(pkvm_mem32_base),
+			      pkvm_mem32_size >> PAGE_SHIFT));
 
 	pkvm_hypercall(init_finalize);
 

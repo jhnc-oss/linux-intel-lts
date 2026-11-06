@@ -162,7 +162,7 @@ struct user_event_mm;
  */
 #define is_special_task_state(state)					\
 	((state) & (__TASK_STOPPED | __TASK_TRACED | TASK_PARKED |	\
-		    TASK_DEAD | TASK_FROZEN))
+		    TASK_DEAD | TASK_WAKING | TASK_FROZEN))
 
 #ifdef CONFIG_DEBUG_ATOMIC_SLEEP
 # define debug_normal_state_change(state_value)				\
@@ -593,15 +593,10 @@ struct sched_entity {
 	u64				sum_exec_runtime;
 	u64				prev_sum_exec_runtime;
 	u64				vruntime;
-	union {
-		/*
-		 * When !@on_rq this field is vlag.
-		 * When cfs_rq->curr == se (which implies @on_rq)
-		 * this field is vprot. See protect_slice().
-		 */
-		s64                     vlag;
-		u64                     vprot;
-	};
+	/* Approximated virtual lag: */
+	s64				vlag;
+	/* 'Protected' deadline, to give out minimum quantums: */
+	u64				vprot;
 	u64				slice;
 
 	u64				nr_migrations;
@@ -889,6 +884,7 @@ struct task_struct {
 	int				recent_used_cpu;
 	int				wake_cpu;
 	int				on_rq;
+	int				is_blocked;
 
 	int				prio;
 	int				static_prio;
@@ -1029,6 +1025,9 @@ struct task_struct {
 #ifdef CONFIG_RT_MUTEXES
 	unsigned			sched_rt_mutex:1;
 #endif
+
+	/* Save user-dumpable when mm goes away */
+	unsigned			user_dumpable:1;
 
 	/* Bit to tell TOMOYO we're in execve(): */
 	unsigned			in_execve:1;
@@ -1277,7 +1276,6 @@ struct task_struct {
 	struct blocked_on_lock		blocked_on;	/* lock we're blocked on */
 	raw_spinlock_t			blocked_lock;
 #ifdef CONFIG_SCHED_PROXY_EXEC
-	struct list_head		migration_node;
 	struct list_head		blocked_head;  /* tasks blocked on this task */
 	struct list_head		blocked_node;  /* our entry on someone elses blocked_head */
 	/* Node for list of tasks to process blocked_head list for blocked entitiy activations */
@@ -1656,6 +1654,10 @@ struct task_struct {
 	unsigned long			prev_lowest_stack;
 #endif
 
+#ifdef CONFIG_RANDOMIZE_KSTACK_OFFSET
+	u32				kstack_offset;
+#endif
+
 #ifdef CONFIG_X86_MCE
 	void __user			*mce_vaddr;
 	__u64				mce_kflags;
@@ -1689,10 +1691,6 @@ struct task_struct {
 	ANDROID_KABI_RESERVE(2);
 	ANDROID_KABI_RESERVE(3);
 	ANDROID_KABI_RESERVE(4);
-	ANDROID_KABI_RESERVE(5);
-	ANDROID_KABI_RESERVE(6);
-	ANDROID_KABI_RESERVE(7);
-	ANDROID_KABI_RESERVE(8);
 
 #ifdef CONFIG_RV
 	/*
@@ -1710,10 +1708,10 @@ struct task_struct {
 	struct unwind_task_info		unwind_info;
 #endif
 
+	struct task_dma_buf_info *dmabuf_info;
+
 	/* CPU-specific state of this task: */
 	struct thread_struct		thread;
-
-	struct task_dma_buf_info *dmabuf_info;
 
 	/*
 	 * New fields for task_struct should be added above here, so that

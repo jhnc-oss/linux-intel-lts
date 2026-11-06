@@ -37,5 +37,33 @@ struct pkvm_init_ops {
 int pkvm_init(struct pkvm_mem_info infos[], int nr_info);
 int pkvm_init_finalize(void);
 int pkvm_reprivilege_vcpu(struct kvm_vcpu *vcpu);
+bool pkvm_cpu_initialized(int cpu);
+
+/**
+ * for_each_pkvm_initialized_cpu - iterate over initialized pKVM host vCPUs
+ * @i: iterator variable for vCPU index
+ * @vcpu: struct kvm_vcpu pointer to host vCPU, assigned by macro.
+ *
+ * Iterates over all host vCPUs, skipping the ones whose corresponding CPU is
+ * not initialized by pkvm_init() yet.
+ */
+#define for_each_pkvm_initialized_cpu(i, vcpu)					\
+	for ((i) = 0; (i) < pkvm_hyp->num_cpus &&				\
+		      ({ (vcpu) = pkvm_hyp->host_vcpus[(i)]; true; }); (i)++)	\
+		if (!pkvm_cpu_initialized((vcpu)->cpu))				\
+			continue;						\
+		else
+
+/**
+ * for_each_pkvm_pcpu - iterate over pKVM physical CPUs
+ * @i: iterator variable for physical CPU index
+ * @pcpu: struct pkvm_pcpu pointer, assigned by macro.
+ *
+ * NOTE: Iterates over all CPUs, including those that
+ * might not be initialized by pkvm_init() yet.
+ */
+#define for_each_pkvm_pcpu(i, pcpu)						\
+	for ((i) = 0; (i) < pkvm_hyp->num_cpus &&				\
+		      ({ (pcpu) = pkvm_hyp->pcpus[(i)]; true; }); (i)++)	\
 
 #endif /* __PKVM_X86_INIT_H */

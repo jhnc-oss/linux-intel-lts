@@ -1036,7 +1036,7 @@ static void update_dl_entity(struct sched_dl_entity *dl_se)
 	if (dl_time_before(dl_se->deadline, rq_clock(rq)) ||
 	    dl_entity_overflow(dl_se, rq_clock(rq))) {
 
-		if (unlikely(!dl_is_implicit(dl_se) &&
+		if (unlikely((!dl_is_implicit(dl_se) || dl_se->dl_defer) &&
 			     !dl_time_before(dl_se->deadline, rq_clock(rq)) &&
 			     !is_dl_boosted(dl_se))) {
 			update_dl_revised_wakeup(dl_se, rq);
@@ -2360,7 +2360,7 @@ static void enqueue_task_dl(struct rq *rq, struct task_struct *p, int flags)
 	if (dl_rq->curr == dl_se)
 		return;
 
-	if (!task_current(rq, p) && !p->dl.dl_throttled && p->nr_cpus_allowed > 1)
+	if (!task_current(rq, p) && !dl_se->dl_throttled && p->nr_cpus_allowed > 1)
 		enqueue_pushable_dl_task(rq, p);
 }
 
@@ -2513,6 +2513,9 @@ static void check_preempt_equal_dl(struct rq *rq, struct task_struct *p)
 		return;
 
 	exec_ctx = find_exec_ctx(rq, p);
+	if (!exec_ctx)
+		return;
+
 	if (task_current(rq, exec_ctx))
 		return;
 
@@ -2632,6 +2635,7 @@ static struct task_struct *__pick_task_dl(struct rq *rq, struct rq_flags *rf)
 	struct sched_dl_entity *dl_se;
 	struct dl_rq *dl_rq = &rq->dl;
 	struct task_struct *p;
+	bool skip = false;
 
 again:
 	if (!sched_dl_runnable(rq))
@@ -2642,7 +2646,8 @@ again:
 
 	if (dl_server(dl_se)) {
 		p = dl_se->server_pick_task(dl_se, rf);
-		if (!p) {
+		trace_android_rvh_dl_server_stop_skip(dl_se, rq, p, &skip);
+		if (!p || skip) {
 			dl_server_stop(dl_se);
 			goto again;
 		}
@@ -2754,7 +2759,7 @@ static int find_later_rq(struct task_struct *sched_ctx, struct task_struct *exec
 	if (unlikely(!later_mask))
 		return -1;
 
-	if (exec_ctx && exec_ctx->nr_cpus_allowed == 1)
+	if (!exec_ctx || exec_ctx->nr_cpus_allowed == 1)
 		return -1;
 
 	/*
@@ -2846,8 +2851,10 @@ static struct task_struct *pick_next_pushable_dl_task(struct rq *rq)
 		 * (pushable but can't go to cpu0) the same as a 1 result
 		 * (pushable to cpu0). All we care about here is general
 		 * pushability.
+		 *
+		 * skip tasks that cannot be migrated.
 		 */
-		if (task_is_pushable(rq, i, 0)) {
+		if (task_is_pushable(rq, i, 0) && !is_migration_disabled(i)) {
 			p = i;
 			break;
 		}

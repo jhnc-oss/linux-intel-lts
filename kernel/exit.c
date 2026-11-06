@@ -214,7 +214,12 @@ static void __exit_signal(struct release_task_post *post, struct task_struct *ts
 	__unhash_process(post, tsk, group_dead);
 	write_sequnlock(&sig->stats_lock);
 
-	tsk->sighand = NULL;
+	/*
+	 * Ensure that all preceeding state is visible. Pairs with
+	 * the smp_acquire__after_ctrl_dep() in the sighand == NULL
+	 * path of lock_task_sighand().
+	 */
+	smp_store_release(&tsk->sighand, NULL);
 	spin_unlock(&sighand->siglock);
 
 	__cleanup_sighand(sighand);
@@ -574,6 +579,7 @@ static void exit_mm(void)
 	 */
 	smp_mb__after_spinlock();
 	local_irq_disable();
+	current->user_dumpable = (get_dumpable(mm) == SUID_DUMP_USER);
 	current->mm = NULL;
 	membarrier_update_current_mm(NULL);
 	enter_lazy_tlb(mm, current);
@@ -924,6 +930,7 @@ void __noreturn do_exit(long code)
 	trace_android_vh_exit_check(current);
 	seccomp_filter_release(tsk);
 
+	trace_android_vh_lock_task_exit(tsk);
 	acct_update_integrals(tsk);
 	group_dead = atomic_dec_and_test(&tsk->signal->live);
 	if (group_dead) {
@@ -1074,6 +1081,7 @@ void __noreturn make_task_dead(int signr)
 		futex_exit_recursive(tsk);
 		tsk->exit_state = EXIT_DEAD;
 		refcount_inc(&tsk->rcu_users);
+		preempt_disable();
 		do_task_dead();
 	}
 
@@ -1114,6 +1122,7 @@ do_group_exit(int exit_code)
 		}
 		spin_unlock_irq(&sighand->siglock);
 	}
+	trace_android_vh_do_group_exit(current);
 
 	do_exit(exit_code);
 	/* NOTREACHED */

@@ -364,6 +364,15 @@ ieee80211_verify_sta_ht_mcs_support(struct ieee80211_sub_if_data *sdata,
 	ieee80211_apply_htcap_overrides(sdata, &sta_ht_cap);
 
 	/*
+	 * Some Xfinity XB8 firmware advertises >1 spatial stream MCS indexes in
+	 * their basic HT-MCS set. On cards with lower spatial streams, the check
+	 * would fail, and we'd be stuck with no HT when it in fact work fine with
+	 * its own supported rate. So check it only in strict mode.
+	 */
+	if (!ieee80211_hw_check(&sdata->local->hw, STRICT))
+		return true;
+
+	/*
 	 * P802.11REVme/D7.0 - 6.5.4.2.4
 	 * ...
 	 * If the MLME of an HT STA receives an MLME-JOIN.request primitive
@@ -1548,7 +1557,7 @@ static void ieee80211_assoc_add_rates(struct ieee80211_local *local,
 		 * in the association request (e.g. D-Link DAP 1353 in
 		 * b-only mode)...
 		 */
-		ieee80211_parse_bitrates(width, sband,
+		ieee80211_parse_bitrates(sband,
 					 assoc_data->supp_rates,
 					 assoc_data->supp_rates_len,
 					 &rates);
@@ -5412,7 +5421,7 @@ static bool ieee80211_assoc_config_link(struct ieee80211_link_data *link,
 
 	/* Set up internal HT/VHT capabilities */
 	if (elems->ht_cap_elem && link->u.mgd.conn.mode >= IEEE80211_CONN_MODE_HT)
-		ieee80211_ht_cap_ie_to_sta_ht_cap(sdata, sband,
+		ieee80211_ht_cap_ie_to_sta_ht_cap(sdata, &sband->ht_cap,
 						  elems->ht_cap_elem,
 						  link_sta);
 
@@ -5448,6 +5457,7 @@ static bool ieee80211_assoc_config_link(struct ieee80211_link_data *link,
 		}
 
 		ieee80211_vht_cap_ie_to_sta_vht_cap(sdata, sband,
+						    &sband->vht_cap,
 						    elems->vht_cap_elem,
 						    bss_vht_cap, link_sta);
 		rcu_read_unlock();
@@ -5897,7 +5907,8 @@ ieee80211_determine_our_sta_mode(struct ieee80211_sub_if_data *sdata,
 
 	if (is_5ghz &&
 	    !(vht_cap.cap & (IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_160MHZ |
-			     IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_160_80PLUS80MHZ))) {
+			     IEEE80211_VHT_CAP_SUPP_CHAN_WIDTH_160_80PLUS80MHZ |
+			     IEEE80211_VHT_CAP_EXT_NSS_BW_MASK))) {
 		conn->bw_limit = IEEE80211_CONN_BW_LIMIT_80;
 		mlme_link_id_dbg(sdata, link_id,
 				 "no VHT 160 MHz capability on 5 GHz, limiting to 80 MHz");
@@ -7958,6 +7969,7 @@ ieee80211_parse_neg_ttlm(struct ieee80211_sub_if_data *sdata,
 					 "No active links for TID %d", tid);
 				return -EINVAL;
 			}
+			pos += map_size;
 		} else {
 			map = 0;
 		}
@@ -7976,7 +7988,6 @@ ieee80211_parse_neg_ttlm(struct ieee80211_sub_if_data *sdata,
 		default:
 			return -EINVAL;
 		}
-		pos += map_size;
 	}
 	return 0;
 }
@@ -8926,7 +8937,7 @@ static int ieee80211_prep_connection(struct ieee80211_sub_if_data *sdata,
 	struct ieee80211_bss *bss = (void *)cbss->priv;
 	struct sta_info *new_sta = NULL;
 	struct ieee80211_link_data *link;
-	bool have_sta = false;
+	struct sta_info *have_sta = NULL;
 	bool mlo;
 	int err;
 	u16 new_links;
@@ -8945,11 +8956,8 @@ static int ieee80211_prep_connection(struct ieee80211_sub_if_data *sdata,
 		mlo = false;
 	}
 
-	if (assoc) {
-		rcu_read_lock();
+	if (assoc)
 		have_sta = sta_info_get(sdata, ap_mld_addr);
-		rcu_read_unlock();
-	}
 
 	if (mlo && !have_sta &&
 	    WARN_ON(sdata->vif.valid_links || sdata->vif.active_links))
@@ -9108,6 +9116,8 @@ static int ieee80211_prep_connection(struct ieee80211_sub_if_data *sdata,
 out_release_chan:
 	ieee80211_link_release_channel(link);
 out_err:
+	if (mlo && have_sta)
+		WARN_ON(__sta_info_destroy(have_sta));
 	ieee80211_vif_set_links(sdata, 0, 0);
 	return err;
 }
@@ -10996,6 +11006,9 @@ static void ieee80211_ml_epcs(struct ieee80211_sub_if_data *sdata,
 
 		control = get_unaligned_le16(pos);
 		link_id = control & IEEE80211_MLE_STA_EPCS_CONTROL_LINK_ID;
+
+		if (link_id >= IEEE80211_MLD_MAX_NUM_LINKS)
+			continue;
 
 		link = sdata_dereference(sdata->link[link_id], sdata);
 		if (!link)

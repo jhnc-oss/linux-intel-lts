@@ -42,6 +42,10 @@
 #include <linux/workqueue.h>
 #include <linux/task_work.h>
 
+#include <trace/hooks/cgroup.h>
+
+#include <trace/hooks/cgroup.h>
+
 DEFINE_STATIC_KEY_FALSE(cpusets_pre_enable_key);
 DEFINE_STATIC_KEY_FALSE(cpusets_enabled_key);
 
@@ -3164,16 +3168,13 @@ static int cpuset_can_attach(struct cgroup_taskset *tset)
 		int cpu = cpumask_any_and(cpu_active_mask, cs->effective_cpus);
 
 		if (unlikely(cpu >= nr_cpu_ids)) {
-			reset_migrate_dl_data(cs);
 			ret = -EINVAL;
 			goto out_unlock;
 		}
 
 		ret = dl_bw_alloc(cpu, cs->sum_migrate_dl_bw);
-		if (ret) {
-			reset_migrate_dl_data(cs);
+		if (ret)
 			goto out_unlock;
-		}
 	}
 
 out_success:
@@ -3182,7 +3183,10 @@ out_success:
 	 * changes which zero cpus/mems_allowed.
 	 */
 	cs->attach_in_progress++;
+
 out_unlock:
+	if (ret)
+		reset_migrate_dl_data(cs);
 	mutex_unlock(&cpuset_mutex);
 	return ret;
 }
@@ -3233,6 +3237,8 @@ static void cpuset_attach_task(struct cpuset *cs, struct task_struct *task)
 
 	cpuset_change_task_nodemask(task, &cpuset_attach_nodemask_to);
 	cpuset1_update_task_spread_flags(cs, task);
+
+	trace_android_vh_cpuset_attach_task(&cs->css, task);
 }
 
 static void cpuset_attach(struct cgroup_taskset *tset)
@@ -3648,6 +3654,7 @@ static int cpuset_css_online(struct cgroup_subsys_state *css)
 	spin_unlock_irq(&callback_lock);
 out_unlock:
 	cpuset_full_unlock();
+	trace_android_vh_cpuset_css_online(css);
 	return 0;
 }
 
@@ -3778,18 +3785,18 @@ static void cpuset_cancel_fork(struct task_struct *task, struct css_set *cset)
 static void cpuset_fork(struct task_struct *task)
 {
 	struct cpuset *cs;
-	bool same_cs;
+	bool same_cs, inherit_cpus = false;
 
 	rcu_read_lock();
 	cs = task_cs(task);
 	same_cs = (cs == task_cs(current));
 	rcu_read_unlock();
-
 	if (same_cs) {
 		if (cs == &top_cpuset)
 			return;
-
-		set_cpus_allowed_ptr(task, current->cpus_ptr);
+		trace_android_rvh_cpuset_fork(task, &inherit_cpus);
+		if (!inherit_cpus)
+			set_cpus_allowed_ptr(task, current->cpus_ptr);
 		task->mems_allowed = current->mems_allowed;
 		return;
 	}

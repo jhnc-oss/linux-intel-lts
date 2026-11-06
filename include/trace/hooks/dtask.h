@@ -81,6 +81,11 @@ DECLARE_HOOK(android_vh_rwsem_can_spin_on_owner,
 	TP_PROTO(struct rw_semaphore *sem, bool *ret),
 	TP_ARGS(sem, ret));
 
+struct rq;
+DECLARE_HOOK(android_vh_preempt_lazy_mode,
+	TP_PROTO(struct rq *rq, bool *need_lazy),
+	TP_ARGS(rq, need_lazy));
+
 struct device;
 DECLARE_HOOK(android_vh_dpm_wait_start,
 	TP_PROTO(struct device *dev),
@@ -129,6 +134,9 @@ DECLARE_HOOK(android_vh_percpu_rwsem_up_write,
 DECLARE_RESTRICTED_HOOK(android_rvh_percpu_rwsem_wait_complete,
 	TP_PROTO(struct percpu_rw_semaphore *sem, long state, bool *complete),
 	TP_ARGS(sem, state, complete), 1);
+DECLARE_HOOK(android_vh_percpu_rwsem_init,
+	TP_PROTO(struct percpu_rw_semaphore *sem),
+	TP_ARGS(sem));
 
 DECLARE_HOOK(android_vh_set_tsk_need_resched_lazy,
 	TP_PROTO(struct task_struct *p, struct rq *rq, int *need_lazy),
@@ -170,6 +178,15 @@ DECLARE_HOOK(android_vh_pcpu_rwsem_lock_acquired,
 DECLARE_HOOK(android_vh_pcpu_rwsem_lock_released,
 	TP_PROTO(struct percpu_rw_semaphore *sem),
 	TP_ARGS(sem));
+DECLARE_HOOK(android_vh_lock_delay_schedule,
+	TP_PROTO(struct task_struct *prev, int sched_mode, bool *ext_slice),
+	TP_ARGS(prev, sched_mode, ext_slice));
+DECLARE_HOOK(android_vh_lock_task_fork,
+	TP_PROTO(struct task_struct *p),
+	TP_ARGS(p));
+DECLARE_HOOK(android_vh_lock_task_exit,
+	TP_PROTO(struct task_struct *p),
+	TP_ARGS(p));
 #endif /* _TRACE_HOOK_DTASK_H */
 
 /* This part must be outside protection */

@@ -28,6 +28,7 @@ struct memblock_region hyp_memory[HYP_MEMBLOCK_REGIONS];
 unsigned int hyp_memblock_nr;
 
 static u64 __io_map_base;
+static u64 __io_map_next;
 
 struct hyp_fixmap_slot {
 	u64 addr;
@@ -56,7 +57,7 @@ static int __pkvm_alloc_private_va_range(unsigned long start, size_t size)
 
 	hyp_assert_lock_held(&pkvm_pgd_lock);
 
-	if (!start || start < __io_map_base)
+	if (!start || start < __io_map_next)
 		return -EINVAL;
 
 	/* The allocated size is always a multiple of PAGE_SIZE */
@@ -66,7 +67,7 @@ static int __pkvm_alloc_private_va_range(unsigned long start, size_t size)
 	if (cur > __hyp_vmemmap)
 		return -ENOMEM;
 
-	__io_map_base = cur;
+	__io_map_next = cur;
 
 	return 0;
 }
@@ -76,7 +77,7 @@ static int __pkvm_alloc_private_va_range(unsigned long start, size_t size)
  * @size:	The size of the VA range to reserve.
  * @haddr:	The hypervisor virtual start address of the allocation.
  *
- * The private virtual address (VA) range is allocated above __io_map_base
+ * The private virtual address (VA) range is allocated above __io_map_next
  * and aligned based on the order of @size.
  *
  * Return: 0 on success or negative error code on failure.
@@ -87,7 +88,7 @@ int pkvm_alloc_private_va_range(size_t size, unsigned long *haddr)
 	int ret;
 
 	hyp_spin_lock(&pkvm_pgd_lock);
-	addr = __io_map_base;
+	addr = __io_map_next;
 	ret = __pkvm_alloc_private_va_range(addr, size);
 	hyp_spin_unlock(&pkvm_pgd_lock);
 
@@ -303,7 +304,7 @@ int hyp_back_vmemmap(phys_addr_t back)
 }
 
 static void *__hyp_bp_vect_base;
-int pkvm_cpu_set_vector(enum arm64_hyp_spectre_vector slot)
+int __pkvm_cpu_set_vector(enum arm64_hyp_spectre_vector slot, int cpu)
 {
 	void *vector;
 
@@ -326,9 +327,14 @@ int pkvm_cpu_set_vector(enum arm64_hyp_spectre_vector slot)
 	}
 
 	vector = __kvm_vector_slot2addr(vector, slot);
-	*this_cpu_ptr(&kvm_hyp_vector) = (unsigned long)vector;
+	*per_cpu_ptr(&kvm_hyp_vector, cpu) = (unsigned long)vector;
 
 	return 0;
+}
+
+int pkvm_cpu_set_vector(enum arm64_hyp_spectre_vector slot)
+{
+	return __pkvm_cpu_set_vector(slot, hyp_smp_processor_id());
 }
 
 int hyp_map_vectors(void)
@@ -395,7 +401,7 @@ static void fixmap_clear_slot(struct hyp_fixmap_slot *slot)
 	 */
 	dsb(ishst);
 	__tlbi_level(vale2is, __TLBI_VADDR(addr, 0), level);
-	dsb(ish);
+	__tlbi_sync_s1ish_hyp();
 	isb();
 }
 
@@ -465,7 +471,7 @@ static int create_fixblock(void)
 		return -EINVAL;
 
 	hyp_spin_lock(&pkvm_pgd_lock);
-	addr = ALIGN(__io_map_base, PMD_SIZE);
+	addr = ALIGN(__io_map_next, PMD_SIZE);
 	ret = __pkvm_alloc_private_va_range(addr, PMD_SIZE);
 	if (ret)
 		goto unlock;
@@ -550,6 +556,7 @@ int hyp_create_idmap(u32 hyp_va_bits)
 	 */
 	__io_map_base = start & BIT(hyp_va_bits - 2);
 	__io_map_base ^= BIT(hyp_va_bits - 2);
+	__io_map_next = __io_map_base;
 	__hyp_vmemmap = __io_map_base | BIT(hyp_va_bits - 3);
 
 	return __pkvm_create_mappings(start, end - start, start, PAGE_HYP_EXEC);
@@ -557,19 +564,19 @@ int hyp_create_idmap(u32 hyp_va_bits)
 
 int pkvm_create_stack(phys_addr_t phys, unsigned long *haddr)
 {
-	unsigned long addr, prev_base;
+	unsigned long addr, prev_next;
 	size_t size;
 	int ret;
 
 	hyp_spin_lock(&pkvm_pgd_lock);
 
-	prev_base = __io_map_base;
+	prev_next = __io_map_next;
 	/*
 	 * Efficient stack verification using the NVHE_STACK_SHIFT bit implies
 	 * an alignment of our allocation on the order of the size.
 	 */
 	size = NVHE_STACK_SIZE * 2;
-	addr = ALIGN(__io_map_base, size);
+	addr = ALIGN(__io_map_next, size);
 
 	ret = __pkvm_alloc_private_va_range(addr, size);
 	if (!ret) {
@@ -585,13 +592,72 @@ int pkvm_create_stack(phys_addr_t phys, unsigned long *haddr)
 		ret = kvm_pgtable_hyp_map(&pkvm_pgtable, addr + NVHE_STACK_SIZE,
 					  NVHE_STACK_SIZE, phys, PAGE_HYP);
 		if (ret)
-			__io_map_base = prev_base;
+			__io_map_next = prev_next;
 	}
 	hyp_spin_unlock(&pkvm_pgd_lock);
 
 	*haddr = addr + size;
 
 	return ret;
+}
+
+static int check_page_ownership(phys_addr_t phys)
+{
+	kvm_pte_t pte;
+	bool host_ok;
+	int ret;
+
+	if (addr_is_memory(phys)) {
+		struct hyp_page *page = hyp_phys_to_page(phys);
+
+		if (get_hyp_state(page) != PKVM_PAGE_OWNED ||
+		    get_host_state(page) != PKVM_NOPAGE)
+			return -EPERM;
+	}
+
+	ret = kvm_pgtable_get_leaf(&host_mmu.pgt, phys, &pte, NULL);
+	if (ret)
+		return ret;
+
+	/* Hyp text may stay host-readable, see fix_host_ownership_walker(). */
+	if (kvm_pte_valid(pte) && addr_is_hyp_text(phys))
+		host_ok = !(kvm_pgtable_stage2_pte_prot(pte) & KVM_PGTABLE_PROT_W);
+	else
+		host_ok = host_stage2_pte_is_hyp_owned(pte);
+
+	return host_ok ? 0 : -EPERM;
+}
+
+static int check_host_ownership_walker(const struct kvm_pgtable_visit_ctx *ctx,
+				       enum kvm_pgtable_walk_flags visit)
+{
+	phys_addr_t phys, end;
+	int ret;
+
+	if (!kvm_pte_valid(ctx->old))
+		return 0;
+
+	phys = kvm_pte_to_phys(ctx->old);
+	end = phys + kvm_granule_size(ctx->level);
+	for (; phys < end; phys += PAGE_SIZE) {
+		ret = check_page_ownership(phys);
+		if (ret)
+			return ret;
+	}
+
+	return 0;
+}
+
+int pkvm_check_host_ownership(void)
+{
+	struct kvm_pgtable_walker walker = {
+		.cb	= check_host_ownership_walker,
+		.flags	= KVM_PGTABLE_WALK_LEAF,
+	};
+
+	/* The private range and the vmemmap share one quarter of the VA space. */
+	return kvm_pgtable_walk(&pkvm_pgtable, __io_map_base,
+				BIT(pkvm_pgtable.ia_bits - 2), &walker);
 }
 
 /* Note: The caller has to use a local copy of the arg */

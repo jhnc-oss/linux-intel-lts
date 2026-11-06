@@ -73,7 +73,9 @@ enum __kvm_host_smccc_func {
 	__KVM_HOST_SMCCC_FUNC___pkvm_init_module,
 	__KVM_HOST_SMCCC_FUNC___pkvm_register_hcall,
 	__KVM_HOST_SMCCC_FUNC___pkvm_iommu_register_ops,
+	__KVM_HOST_SMCCC_FUNC___pkvm_iommu_init_atomic_pool,
 	__KVM_HOST_SMCCC_FUNC___pkvm_devices_init,
+	__KVM_HOST_SMCCC_FUNC___pkvm_late_cpus_finalize,
 	__KVM_HOST_SMCCC_FUNC___pkvm_prot_finalize,
 
 	/* Hypercalls available after pKVM finalisation */
@@ -139,6 +141,7 @@ enum __kvm_host_smccc_func {
 	__KVM_HOST_SMCCC_FUNC___pkvm_host_map_guest_mmio,
 	__KVM_HOST_SMCCC_FUNC___pkvm_pviommu_attach,
 	__KVM_HOST_SMCCC_FUNC___pkvm_pviommu_add_vsid,
+	__KVM_HOST_SMCCC_FUNC___pkvm_host_iommu_page_response,
 
 	/*
 	 * Start of the dynamically registered hypercalls. Start a bit
@@ -257,7 +260,6 @@ struct kvm_nvhe_init_params {
 	unsigned long hfgwtr_el2;
 	unsigned long vttbr;
 	unsigned long vtcr;
-	unsigned long tmp;
 };
 
 /*
@@ -450,6 +452,16 @@ void __noreturn __cold nvhe_hyp_panic_handler(u64 esr, u64 spsr, u64 elr_virt,
 .macro restore_sp_el0 ctxt, tmp
 	ldr	\tmp,	  [\ctxt, #CPU_SP_EL0_OFFSET]
 	msr	sp_el0, \tmp
+.endm
+
+.macro save_tpidrro_el0 ctxt, tmp
+	mrs	\tmp,	tpidrro_el0
+	str	\tmp,	[\ctxt, #CPU_TPIDRRO_EL0_OFFSET]
+.endm
+
+.macro restore_tpidrro_el0 ctxt, tmp
+	ldr	\tmp,	  [\ctxt, #CPU_TPIDRRO_EL0_OFFSET]
+	msr	tpidrro_el0, \tmp
 .endm
 
 #endif

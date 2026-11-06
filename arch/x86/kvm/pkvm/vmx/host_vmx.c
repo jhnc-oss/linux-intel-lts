@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-2.0
 #include <linux/kvm_types.h>
 #include <linux/memblock.h>
+#include <asm/fpu/xcr.h>
 #include <kvm_emulate.h>
 #include <vmx/x86_ops.h>
 #include "debug.h"
 #include "ept.h"
+#include "gsmi.h"
 #include "host_vmx.h"
 #include "pkvm/init.h"
 #include "pkvm/lapic.h"
@@ -38,13 +40,15 @@ static struct pkvm_init_ops vmx_init_ops = {
 
 struct pkvm_init_ops *pkvm_vmx_init_ops = &vmx_init_ops;
 
-static void skip_emulated_instruction(void)
+static void skip_emulated_instruction(struct kvm_vcpu *vcpu)
 {
 	unsigned long rip;
 
 	rip = vmcs_readl(GUEST_RIP);
 	rip += vmcs_read32(VM_EXIT_INSTRUCTION_LEN);
 	vmcs_writel(GUEST_RIP, rip);
+
+	vmx_set_interrupt_shadow(vcpu, 0);
 }
 
 static void handle_irq_window(struct kvm_vcpu *vcpu)
@@ -70,9 +74,16 @@ static void handle_cpuid(struct kvm_vcpu *vcpu)
 	vcpu->arch.regs[VCPU_REGS_RDX] = edx;
 }
 
-static void handle_vmcall(struct kvm_vcpu *vcpu)
+static int handle_vmcall(struct kvm_vcpu *vcpu)
 {
+	/* Host hypercalls are a kernel-only ABI. */
+	if (vmx_get_cpl_no_cache(vcpu)) {
+		kvm_inject_gp(vcpu, 0);
+		return X86EMUL_UNHANDLEABLE;
+	}
+
 	pkvm_handle_host_hypercall(vcpu);
+	return X86EMUL_CONTINUE;
 }
 
 static void handle_cr(struct kvm_vcpu *vcpu)
@@ -107,14 +118,56 @@ static void handle_cr(struct kvm_vcpu *vcpu)
 	}
 }
 
-static bool is_msr_in_bitmap_range(unsigned long msr)
+static int handle_io(struct kvm_vcpu *vcpu)
+{
+	struct vcpu_vt *vt = to_vt(vcpu);
+	unsigned long exit_qual;
+	bool in, string;
+	int size;
+	u16 port;
+	u8 val;
+
+	exit_qual = vt->exit_qualification;
+	port = exit_qual >> 16;
+	size = (exit_qual & 7) + 1;
+	in = (exit_qual & 8) != 0;
+	string = (exit_qual & 16) != 0;
+
+	/* We only intercept the SMI command port. */
+	BUG_ON(port > smi_command_port || port + size <= smi_command_port);
+
+	/*
+	 * For simplicity, only allow single-byte non-string accesses
+	 * to the SMI command port. This covers Linux kernel's needs.
+	 */
+	if (size != 1 || string) {
+		kvm_inject_gp(vcpu, 0);
+		return X86EMUL_UNHANDLEABLE;
+	}
+
+	if (in) {
+		val = inb(port);
+		vcpu->arch.regs[VCPU_REGS_RAX] &= ~0xffUL;
+		vcpu->arch.regs[VCPU_REGS_RAX] |= val;
+	} else {
+		val = vcpu->arch.regs[VCPU_REGS_RAX] & 0xff;
+		if (val == GSMI_CALLBACK)
+			pkvm_handle_gsmi(vcpu);
+		else
+			outb(val, port);
+	}
+
+	return X86EMUL_CONTINUE;
+}
+
+static bool is_msr_in_bitmap_range(u32 msr)
 {
 	return msr <= 0x1FFF || (msr >= 0xC0000000 && msr <= 0xC0001FFF);
 }
 
 static int handle_read_msr(struct kvm_vcpu *vcpu)
 {
-	unsigned long msr = vcpu->arch.regs[VCPU_REGS_RCX];
+	u32 msr = vcpu->arch.regs[VCPU_REGS_RCX];
 	u32 low, high;
 
 	/*
@@ -137,7 +190,7 @@ static int handle_read_msr(struct kvm_vcpu *vcpu)
 
 static int handle_write_msr(struct kvm_vcpu *vcpu)
 {
-	unsigned long msr = vcpu->arch.regs[VCPU_REGS_RCX];
+	u32 msr = vcpu->arch.regs[VCPU_REGS_RCX];
 	int ret = X86EMUL_CONTINUE;
 	u32 low, high;
 	u64 val;
@@ -184,6 +237,48 @@ static int handle_write_msr(struct kvm_vcpu *vcpu)
 		}
 		break;
 	}
+	case MSR_IA32_XSS:
+		BUG_ON(!pkvm_cpu_initialized(vcpu->cpu));
+
+		if (val != kvm_host.xss) {
+			pkvm_warn("Host attempt to modify MSR_IA32_XSS: 0x%llx (expected 0x%llx)\n",
+				  val, kvm_host.xss);
+			ret = X86EMUL_UNHANDLEABLE;
+			break;
+		}
+		if (wrmsr_safe(msr, low, high)) {
+			ret = X86EMUL_UNHANDLEABLE;
+			break;
+		}
+		break;
+	case MSR_SYSCALL_MASK:
+	case MSR_LSTAR:
+	case MSR_CSTAR:
+	case MSR_TSC_AUX:
+	case MSR_STAR:
+	case MSR_IA32_TSX_CTRL: {
+		int slot;
+		u64 cur;
+
+		BUG_ON(!pkvm_cpu_initialized(vcpu->cpu));
+
+		slot = kvm_find_user_return_msr(msr);
+		if (slot >= 0) {
+			cur = kvm_get_user_return_msr(slot);
+			if (val != cur) {
+				pkvm_warn("Host attempt to modify user-return MSR 0x%x: 0x%llx (expected 0x%llx)\n",
+					  msr, val, cur);
+				ret = X86EMUL_UNHANDLEABLE;
+				break;
+			}
+		}
+
+		if (wrmsr_safe(msr, low, high)) {
+			ret = X86EMUL_UNHANDLEABLE;
+			break;
+		}
+		break;
+	}
 	case MSR_IA32_APICBASE:
 	case APIC_BASE_MSR ... APIC_BASE_MSR + 0xff:
 		if (pkvm_lapic_msr_write(msr, val))
@@ -214,14 +309,49 @@ static void handle_preemption_timer(struct kvm_vcpu *vcpu)
 	pin_controls_clearbit(to_vmx(vcpu), PIN_BASED_VMX_PREEMPTION_TIMER);
 }
 
-static void handle_xsetbv(struct kvm_vcpu *vcpu)
+static int handle_xsetbv(struct kvm_vcpu *vcpu)
 {
 	u32 eax = (u32)(vcpu->arch.regs[VCPU_REGS_RAX] & -1u);
 	u32 edx = (u32)(vcpu->arch.regs[VCPU_REGS_RDX] & -1u);
 	u32 ecx = (u32)(vcpu->arch.regs[VCPU_REGS_RCX] & -1u);
 
-	asm volatile(".byte 0x0f,0x01,0xd1"
-			: : "a" (eax), "d" (edx), "c" (ecx));
+	BUG_ON(!pkvm_cpu_initialized(vcpu->cpu));
+
+	if (ecx == XCR_XFEATURE_ENABLED_MASK) {
+		u64 xcr0 = (u64)eax | ((u64)edx << 32);
+
+		if (xcr0 != kvm_host.xcr0) {
+			pkvm_warn("Host attempt to modify XCR0: 0x%llx (expected 0x%llx)\n",
+				  xcr0, kvm_host.xcr0);
+			goto fault;
+		}
+	}
+
+	asm goto("1: xsetbv\n\t"
+		 _ASM_EXTABLE(1b, %l[fault])
+		 : : "a" (eax), "d" (edx), "c" (ecx) : : fault);
+
+	return X86EMUL_CONTINUE;
+
+fault:
+	/*
+	 * Although the SDM doesn't describe the priority of #UD and
+	 * interception for xsetbv, the experiment shows that #UD due to
+	 * CR4.OSXSAVE[bit 18] == 0 and the LOCK prefix has priority
+	 * over the interception.
+	 *
+	 * So the pKVM hypervisor itself won't generate #UD when
+	 * executes the xsetbv instruction, only #GP can be generated
+	 * due to invalid configurations. Always inject #GP if xsetbv
+	 * is failed.
+	 *
+	 * TODO: CPUID.01H:ECX.XSAVE[bit 26] == 0 will also result in
+	 * #UD but all modern Intel CPUs have XSAVE. If the pKVM runs
+	 * on such CPU without XSAVE, verify if this #UD also has
+	 * priority over the interception.
+	 */
+	kvm_inject_gp(vcpu, 0);
+	return X86EMUL_UNHANDLEABLE;
 }
 
 static void inject_pending_nmi(struct kvm_vcpu *vcpu)
@@ -270,6 +400,18 @@ static void handle_pending_events(struct kvm_vcpu *vcpu, bool *req_immediate_exi
 			vmx_inject_exception(vcpu);
 			vcpu->arch.exception.pending = false;
 			vcpu->arch.exception.injected = true;
+
+			if (vmcs_readl(GUEST_CR4) & X86_CR4_FRED) {
+				/*
+				 * KVM doesn't implement FRED virtualization yet, so
+				 * cannot rely on vmx_inject_exception() to deliver
+				 * the fault address on #PF injection if FRED is
+				 * enabled in the host. Do that manually here instead.
+				 */
+				vmcs_write64(INJECTED_EVENT_DATA,
+					     vcpu->arch.exception.vector == PF_VECTOR ?
+					     vcpu->arch.cr2 : 0);
+			}
 		}
 
 		if (vcpu->arch.nmi_pending) {
@@ -287,16 +429,6 @@ static void handle_pending_events(struct kvm_vcpu *vcpu, bool *req_immediate_exi
 
 	if (kvm_check_request(KVM_REQ_TLB_FLUSH_CURRENT, vcpu))
 		pkvm_flush_host_ept();
-}
-
-static inline void set_vcpu_mode(struct kvm_vcpu *vcpu, int mode)
-{
-	vcpu->mode = mode;
-	/*
-	 * Make sure vcpu->mode is set before checking/handling the pending
-	 * requests. Pairs with kvm_vcpu_exiting_guest_mode().
-	 */
-	smp_wmb();
 }
 
 static void fixup_host_vmx(struct vcpu_vmx *vmx)
@@ -327,7 +459,7 @@ void pkvm_host_vmexit_main(struct vcpu_vmx *vmx)
 
 	pkvm_trace_vmexit_start(vcpu);
 
-	set_vcpu_mode(vcpu, OUTSIDE_GUEST_MODE);
+	pkvm_set_vcpu_outside_guest(vcpu);
 
 	vcpu->arch.cr2 = native_read_cr2();
 	vcpu->arch.exception.injected = false;
@@ -337,11 +469,7 @@ void pkvm_host_vmexit_main(struct vcpu_vmx *vmx)
 
 	switch (vt->exit_reason.full) {
 	case EXIT_REASON_INIT_SIGNAL:
-		/*
-		 * INIT is used as kick when making a request.
-		 * So just break the vmexits and go to pending
-		 * events handling.
-		 */
+		pkvm_handle_init_signal();
 		break;
 	case EXIT_REASON_INTERRUPT_WINDOW:
 		handle_irq_window(vcpu);
@@ -351,12 +479,16 @@ void pkvm_host_vmexit_main(struct vcpu_vmx *vmx)
 		skip_instruction = true;
 		break;
 	case EXIT_REASON_VMCALL:
-		handle_vmcall(vcpu);
-		skip_instruction = true;
+		if (handle_vmcall(vcpu) == X86EMUL_CONTINUE)
+			skip_instruction = true;
 		break;
 	case EXIT_REASON_CR_ACCESS:
 		handle_cr(vcpu);
 		skip_instruction = true;
+		break;
+	case EXIT_REASON_IO_INSTRUCTION:
+		if (handle_io(vcpu) == X86EMUL_CONTINUE)
+			skip_instruction = true;
 		break;
 	case EXIT_REASON_MSR_READ:
 		if (handle_read_msr(vcpu) == X86EMUL_CONTINUE)
@@ -367,43 +499,36 @@ void pkvm_host_vmexit_main(struct vcpu_vmx *vmx)
 			skip_instruction = true;
 		break;
 	case EXIT_REASON_EPT_VIOLATION:
-		/*
-		 * Inject #GP to the host VM if its EPT violation
-		 * cannot be handled.
-		 */
-		if (pkvm_handle_host_ept_violation())
-			kvm_inject_gp(vcpu, 0);
+		pkvm_handle_host_ept_violation(vcpu);
 		break;
 	case EXIT_REASON_PREEMPTION_TIMER:
 		handle_preemption_timer(vcpu);
 		break;
 	case EXIT_REASON_XSETBV:
-		handle_xsetbv(vcpu);
-		skip_instruction = true;
+		if (handle_xsetbv(vcpu) == X86EMUL_CONTINUE)
+			skip_instruction = true;
 		break;
 	default:
 		pkvm_err_ratelimited("Unsupported vmexit reason 0x%x.\n",
 				      vt->exit_reason.full);
+		kvm_inject_gp(vcpu, 0);
 		break;
 	}
 
 	if (skip_instruction)
-		skip_emulated_instruction();
+		skip_emulated_instruction(vcpu);
 
 handle_events:
 	handle_pending_events(vcpu, &req_immediate_exit);
 
-	/*
-	 * Once the pending events have been handled, set IN_GUEST_MODE to
-	 * indicate kick is required for the new pending events.
-	 */
-	set_vcpu_mode(vcpu, IN_GUEST_MODE);
+	pkvm_set_vcpu_in_guest(vcpu);
 
 	if (req_immediate_exit) {
 		kvm_make_request(KVM_REQ_EVENT, vcpu);
 		request_host_immediate_exit(vmx);
 	} else if (READ_ONCE(vcpu->mode) == EXITING_GUEST_MODE ||
 		   kvm_request_pending(vcpu)) {
+		pkvm_set_vcpu_outside_guest(vcpu);
 		/*
 		 * Some vcpu requests may be set after handle_pending_events()
 		 * but before set vcpu mode to IN_GUEST_MODE. In this case the

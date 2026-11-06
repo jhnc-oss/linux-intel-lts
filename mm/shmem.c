@@ -42,6 +42,7 @@
 #include <linux/iversion.h>
 #include <linux/unicode.h>
 #include <linux/mm_inline.h>
+#include <linux/page_size_compat.h>
 #include "swap.h"
 
 #undef CREATE_TRACE_POINTS
@@ -2024,11 +2025,14 @@ unlock:
 	return ERR_PTR(error);
 }
 
+static DECLARE_WAIT_QUEUE_HEAD(shmem_swapcache_wq);
+
 static struct folio *shmem_swap_alloc_folio(struct inode *inode,
 		struct vm_area_struct *vma, pgoff_t index,
 		swp_entry_t entry, int order, gfp_t gfp)
 {
 	struct shmem_inode_info *info = SHMEM_I(inode);
+	DECLARE_WAITQUEUE(wait, current);
 	int nr_pages = 1 << order;
 	struct folio *new;
 	gfp_t alloc_gfp;
@@ -2085,6 +2089,10 @@ retry:
 	if (swapcache_prepare(entry, nr_pages)) {
 		folio_put(new);
 		new = ERR_PTR(-EEXIST);
+		/* Relax a bit to prevent rapid repeated page faults */
+		add_wait_queue(&shmem_swapcache_wq, &wait);
+		schedule_timeout_uninterruptible(1);
+		remove_wait_queue(&shmem_swapcache_wq, &wait);
 		/* Try smaller folio to avoid cache conflict */
 		goto fallback;
 	}
@@ -2444,6 +2452,8 @@ static int shmem_swapin_folio(struct inode *inode, pgoff_t index,
 	if (skip_swapcache) {
 		folio->swap.val = 0;
 		swapcache_clear(si, swap, nr_pages);
+		if (waitqueue_active(&shmem_swapcache_wq))
+			wake_up(&shmem_swapcache_wq);
 	} else {
 		swap_cache_del_folio(folio);
 	}
@@ -2463,8 +2473,11 @@ unlock:
 	if (folio)
 		folio_unlock(folio);
 failed_nolock:
-	if (skip_swapcache)
+	if (skip_swapcache) {
 		swapcache_clear(si, folio->swap, folio_nr_pages(folio));
+		if (waitqueue_active(&shmem_swapcache_wq))
+			wake_up(&shmem_swapcache_wq);
+	}
 	if (folio)
 		folio_put(folio);
 	put_swap_device(si);
@@ -2780,6 +2793,15 @@ static vm_fault_t shmem_fault(struct vm_fault *vmf)
 	struct folio *folio = NULL;
 	vm_fault_t ret = 0;
 	int err;
+	pgoff_t max_idx;
+
+	max_idx = DIV_ROUND_UP(i_size_read(inode), __PAGE_SIZE) * (__PAGE_SIZE / PAGE_SIZE);
+	if (unlikely(vmf->pgoff >= max_idx))
+		return VM_FAULT_SIGBUS;
+
+	max_idx = DIV_ROUND_UP(i_size_read(inode), PAGE_SIZE);
+	if (unlikely(vmf->pgoff >= max_idx))
+		return VM_FAULT_NEED_ANONPAGE;
 
 	/*
 	 * Trinity finds that probing a hole which tmpfs is punching can
@@ -5272,6 +5294,15 @@ static const struct address_space_operations shmem_aops = {
 	.error_remove_folio = shmem_error_remove_folio,
 };
 
+#ifdef CONFIG_ASHMEM
+static long shmem_ashmem_ioctl(struct file *file, unsigned int cmd, unsigned long arg)
+{
+	if (!(SHMEM_I(file_inode(file))->flags & SHMEM_FL_MEMFD))
+		return -ENOTTY;
+	return ashmem_memfd_ioctl(file, cmd, arg);
+}
+#endif
+
 static const struct file_operations shmem_file_operations = {
 	.mmap		= shmem_mmap,
 	.open		= shmem_file_open,
@@ -5286,9 +5317,9 @@ static const struct file_operations shmem_file_operations = {
 	.fallocate	= shmem_fallocate,
 #endif
 #ifdef CONFIG_ASHMEM
-	.unlocked_ioctl	= ashmem_memfd_ioctl,
+	.unlocked_ioctl	= shmem_ashmem_ioctl,
 #ifdef CONFIG_COMPAT
-	.compat_ioctl = ashmem_memfd_ioctl,
+	.compat_ioctl	= shmem_ashmem_ioctl,
 #endif
 #endif
 };

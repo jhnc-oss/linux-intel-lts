@@ -918,8 +918,17 @@ struct vm_area_struct {
 
 	ANDROID_KABI_RESERVE(1);
 	ANDROID_KABI_RESERVE(2);
-	ANDROID_KABI_RESERVE(3);
-	ANDROID_KABI_RESERVE(4);
+
+	/*
+	 * For:
+	 * union {
+	 *         struct ptshare_desc* __vm_ptshare_desc;
+	 *         refcount_t __vm_ptshare_refcount;
+	 * }
+	 */
+	ANDROID_BACKPORT_RESERVE(1);
+
+	ANDROID_BACKPORT_RESERVE(2);
 } __randomize_layout;
 
 #ifdef CONFIG_NUMA
@@ -1237,6 +1246,12 @@ struct mm_struct {
 		struct task_dma_buf_info *dmabuf_info;
 
 		ANDROID_KABI_RESERVE(1);
+
+		/* For 'struct ptshare_desc* ptshare_desc' */
+		ANDROID_BACKPORT_RESERVE(1);
+		/* For 'atomic_t ptshare_vmas' */
+		ANDROID_BACKPORT_RESERVE(2);
+		ANDROID_BACKPORT_RESERVE(3);
 		ANDROID_VENDOR_DATA(1);
 	} __randomize_layout;
 
@@ -1307,6 +1322,8 @@ struct lru_gen_mm_list {
 	struct list_head fifo;
 	/* protects the list above */
 	spinlock_t lock;
+
+	ANDROID_KABI_RESERVE(1);
 };
 
 #endif /* CONFIG_LRU_GEN */
@@ -1552,6 +1569,7 @@ enum vm_fault_reason {
 	VM_FAULT_DONE_COW       = (__force vm_fault_t)0x001000,
 	VM_FAULT_NEEDDSYNC      = (__force vm_fault_t)0x002000,
 	VM_FAULT_COMPLETED      = (__force vm_fault_t)0x004000,
+	VM_FAULT_NEED_ANONPAGE  = (__force vm_fault_t)0x080000,
 	VM_FAULT_HINDEX_MASK    = (__force vm_fault_t)0x0f0000,
 };
 
@@ -1561,7 +1579,8 @@ enum vm_fault_reason {
 
 #define VM_FAULT_ERROR (VM_FAULT_OOM | VM_FAULT_SIGBUS |	\
 			VM_FAULT_SIGSEGV | VM_FAULT_HWPOISON |	\
-			VM_FAULT_HWPOISON_LARGE | VM_FAULT_FALLBACK)
+			VM_FAULT_HWPOISON_LARGE | VM_FAULT_FALLBACK | \
+			VM_FAULT_NEED_ANONPAGE)
 
 #define VM_FAULT_RESULT_TRACE \
 	{ VM_FAULT_OOM,                 "OOM" },	\
@@ -1576,7 +1595,8 @@ enum vm_fault_reason {
 	{ VM_FAULT_FALLBACK,            "FALLBACK" },	\
 	{ VM_FAULT_DONE_COW,            "DONE_COW" },	\
 	{ VM_FAULT_NEEDDSYNC,           "NEEDDSYNC" },	\
-	{ VM_FAULT_COMPLETED,           "COMPLETED" }
+	{ VM_FAULT_COMPLETED,           "COMPLETED" },  \
+	{ VM_FAULT_NEED_ANONPAGE,       "NEED_ANONPAGE"}
 
 struct vm_special_mapping {
 	const char *name;	/* The name, e.g. "[vdso]". */

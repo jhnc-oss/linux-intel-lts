@@ -162,6 +162,9 @@
 #define DMAR_PERFCNTROFF_REG	0x31c
 #define DMAR_PERFINTRSTS_REG	0x324
 #define DMAR_PERFINTRCTL_REG	0x328
+#define DMAR_PERFINTRDATA_REG	0x32c
+#define DMAR_PERFINTRADDR_REG	0x330
+#define DMAR_PERFINTRUADDR_REG	0x334
 #define DMAR_PERFEVNTCAP_REG	0x380
 #define DMAR_ECMD_REG		0x400
 #define DMAR_ECEO_REG		0x408
@@ -403,7 +406,6 @@
 /* PERFINTRSTS_REG */
 #define DMA_PERFINTRSTS_PIS	((u32)1)
 
-#ifndef __PKVM_HYP__
 #define IOMMU_WAIT_OP(iommu, offset, op, cond, sts)			\
 do {									\
 	cycles_t start_time = get_cycles();				\
@@ -416,17 +418,6 @@ do {									\
 		cpu_relax();						\
 	}								\
 } while (0)
-#else
-#define IOMMU_WAIT_OP(iommu, offset, op, cond, sts)			\
-do {									\
-	while (1) {							\
-		sts = op(iommu->reg + offset);				\
-		if (cond)						\
-			break;						\
-		cpu_relax();						\
-	}								\
-} while (0)
-#endif /* !__PKVM_HYP__ */
 
 #define QI_LENGTH	256	/* queue length */
 
@@ -774,7 +765,6 @@ struct dmar_domain {
 #endif /* !__PKVM_HYP__ */
 };
 
-#ifndef __PKVM_HYP__
 /*
  * In theory, the VT-d 4.0 spec can support up to 2 ^ 16 counters.
  * But in practice, there are only 14 counters for the existing
@@ -785,6 +775,7 @@ struct dmar_domain {
  */
 #define IOMMU_PMU_IDX_MAX		64
 
+#ifndef __PKVM_HYP__
 struct iommu_pmu {
 	struct intel_iommu	*iommu;
 	u32			num_cntr;	/* Number of counters */
@@ -875,6 +866,8 @@ struct intel_iommu {
 	u32		vgsts;	/* Virtual GSTS register */
 	u64		viqa;  /* Virtual IQA register */
 	u64		vrta; /* Virtual RTA register */
+	u64		virta; /* Virtual IRTA register */
+	struct irte	*ir_table; /* VA of hypervisor-protected interrupt remapping table */
 	int		seq_id;	/* sequence id of the iommu */
 	int		agaw; /* agaw of this iommu */
 	int		msagaw; /* max sagaw of this iommu */
@@ -882,6 +875,17 @@ struct intel_iommu {
 	struct q_inval  *qi;    /* Pointer to _qi. Enables host code re-use */
 	struct iommu_flush flush;
 	struct root_entry *root_entry;
+	bool		pmu_supported;
+	u64		pmu_perfcap;
+	u32		pmu_cfg;
+	u32		pmu_overflow;
+	u32		pmu_counter;
+	u32		pmu_num_cntr;
+	u32		pmu_num_eg;
+	u32		pmu_cntr_width;
+	u32		pmu_cntr_stride;
+	u32		pmu_filter;
+	u32		pmu_cntrcap[IOMMU_PMU_IDX_MAX];
 	/*
 	 * Virtual address of page donated by host for constructing
 	 * translation structures(context table/pasid table). This
@@ -944,6 +948,8 @@ struct dev_pasid_info {
 #endif
 };
 #else
+/* Pull in struct pasid_table definition for _pasid_table */
+#include "pasid.h"
 struct device_domain_info {
 	u8 bus;			/* PCI bus number */
 	u8 devfn;		/* PCI devfn number */
@@ -956,8 +962,40 @@ struct device_domain_info {
 	u8 ats_enabled:1;
 	u8 ats_qdep;
 	struct intel_iommu *iommu; /* IOMMU used by this device */
+	struct pasid_table _pasid_table;
 	struct pasid_table *pasid_table; /* pasid table */
 };
+
+static inline void pkvm_populate_pfsid(struct device_domain_info *info)
+{
+	if (info->ats_supported && ecap_dit(info->iommu->ecap)) {
+		/*
+		 * Device is in SATC and optimistically assuming that a well crafted SATC
+		 * would contain only physical functions, its safe to set pfsid = bdf.
+		 * TODO: We should probably be verifying SATC for existence of only
+		 * physical functions during pkvm initialization.
+		 */
+		info->pfsid = PCI_DEVID(info->bus, info->devfn);
+	} else {
+		info->pfsid = 0;
+	}
+}
+
+static inline void pkvm_populate_dev_info_from_ce(struct device_domain_info *info,
+						  struct context_entry *ce)
+{
+	/*
+	 * Derive the device's ATS state from the live context entry so
+	 * the device-TLB flush below is driven by hardware state rather
+	 * than a host-supplied flag. Bit 2 is CE.DTE in scalable mode;
+	 * in legacy mode the only translation type that sets it is
+	 * CONTEXT_TT_DEV_IOTLB, so the same test is valid for both.
+	 */
+	info->ats_supported = !!(ce->lo & BIT_ULL(2));
+	info->ats_enabled = info->ats_supported;
+
+	pkvm_populate_pfsid(info);
+}
 #endif /* !__PKVM_HYP__ */
 
 static inline void __iommu_flush_cache(
@@ -1234,8 +1272,14 @@ static inline void context_clear_entry(struct context_entry *context)
 	context->hi = 0;
 }
 
+#ifndef __PKVM_HYP__
 void domain_context_clear_one(struct device_domain_info *info,
 			      u8 bus, u8 devfn);
+#else
+void domain_context_clear_one(struct device_domain_info *info,
+			      u8 bus, u8 devfn,
+			      struct dmar_domain **domain);
+#endif
 int domain_context_mapping_one(struct dmar_domain *domain,
 			       struct intel_iommu *iommu,
 #ifdef __PKVM_HYP__
@@ -1573,7 +1617,13 @@ void intel_iommu_disable_iopf(struct device *dev);
 static inline int iopf_for_domain_set(struct iommu_domain *domain,
 				      struct device *dev)
 {
+	struct device_domain_info *info = dev_iommu_priv_get(dev);
+
 	if (!domain || !domain->iopf_handler)
+		return 0;
+
+	/* SVA with non-IOMMU/PRI IOPF handling is allowed. */
+	if (domain->type == IOMMU_DOMAIN_SVA && !info->pri_supported)
 		return 0;
 
 	return intel_iommu_enable_iopf(dev);
@@ -1582,7 +1632,12 @@ static inline int iopf_for_domain_set(struct iommu_domain *domain,
 static inline void iopf_for_domain_remove(struct iommu_domain *domain,
 					  struct device *dev)
 {
+	struct device_domain_info *info = dev_iommu_priv_get(dev);
+
 	if (!domain || !domain->iopf_handler)
+		return;
+
+	if (domain->type == IOMMU_DOMAIN_SVA && !info->pri_supported)
 		return;
 
 	intel_iommu_disable_iopf(dev);

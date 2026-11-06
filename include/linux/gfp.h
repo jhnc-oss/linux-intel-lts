@@ -13,6 +13,10 @@
 struct vm_area_struct;
 struct mempolicy;
 
+/* Helper macro to avoid gfp flags if they are the default one */
+#define __default_gfp(a,b,...) b
+#define default_gfp(...) __default_gfp(,##__VA_ARGS__,GFP_KERNEL)
+
 /* Convert GFP flags to their corresponding migrate type */
 #define GFP_MOVABLE_MASK (__GFP_RECLAIMABLE|__GFP_MOVABLE)
 #define GFP_MOVABLE_SHIFT 3
@@ -422,6 +426,9 @@ static inline bool gfp_compaction_allowed(gfp_t gfp_mask)
 }
 
 extern gfp_t vma_thp_gfp_mask(struct vm_area_struct *vma);
+
+int set_reclaim_params(int wmark_scale_factor, int swappiness);
+void get_reclaim_params(int *wmark_scale_factor, int *swappiness);
 
 #ifdef CONFIG_CONTIG_ALLOC
 

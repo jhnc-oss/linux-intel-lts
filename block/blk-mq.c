@@ -1405,7 +1405,8 @@ static void blk_add_rq_to_plug(struct blk_plug *plug, struct request *rq)
 		trace_block_plug(rq->q);
 	}
 
-	if (!plug->multiple_queues && last && last->q != rq->q)
+	if (!plug->multiple_queues && ((last && last->q != rq->q) ||
+				       blk_pipeline_zwr(rq->q)))
 		plug->multiple_queues = true;
 	/*
 	 * Any request allocated from sched tags can't be issued to
@@ -1506,6 +1507,7 @@ blk_status_t blk_execute_rq(struct request *rq, bool at_head)
 	blk_account_io_start(rq);
 	blk_mq_insert_request(rq, at_head ? BLK_MQ_INSERT_AT_HEAD : 0);
 	blk_mq_run_hw_queue(hctx, false);
+	trace_android_rvh_blk_execute_rq(rq);
 
 	if (blk_rq_is_poll(rq))
 		blk_rq_poll_completion(rq, &wait.done);
@@ -2136,6 +2138,37 @@ static void blk_mq_commit_rqs(struct blk_mq_hw_ctx *hctx, int queued,
 	}
 }
 
+static void blk_mq_reinsert_list(struct blk_mq_hw_ctx *hctx,
+				 struct list_head *list)
+{
+	struct request *rq, *next;
+	LIST_HEAD(ordered_list);
+
+	if (!blk_mq_preserve_order_for_list(hctx->queue, list)) {
+		spin_lock(&hctx->lock);
+		list_splice_tail_init(list, &hctx->dispatch);
+		spin_unlock(&hctx->lock);
+		return;
+	}
+
+	list_for_each_entry_safe(rq, next, list, queuelist) {
+		if (blk_mq_preserve_order(rq))
+			list_move_tail(&rq->queuelist, &ordered_list);
+	}
+
+	if (!list_empty(list)) {
+		spin_lock(&hctx->lock);
+		list_splice_tail_init(list, &hctx->dispatch);
+		spin_unlock(&hctx->lock);
+	}
+
+	while (!list_empty(&ordered_list)) {
+		rq = list_last_entry(&ordered_list, struct request, queuelist);
+		list_del_init(&rq->queuelist);
+		blk_mq_insert_request(rq, BLK_MQ_INSERT_ORDERED);
+	}
+}
+
 /*
  * Returns true if we did some work AND can potentially do more.
  */
@@ -2211,9 +2244,7 @@ out:
 		if (!get_budget)
 			blk_mq_release_budgets(q, list);
 
-		spin_lock(&hctx->lock);
-		list_splice_tail_init(list, &hctx->dispatch);
-		spin_unlock(&hctx->lock);
+		blk_mq_reinsert_list(hctx, list);
 
 		/*
 		 * Order adding requests to hctx->dispatch and checking
@@ -2713,8 +2744,6 @@ static void blk_mq_insert_request(struct request *rq, blk_insert_t flags)
 	} else if (q->elevator) {
 		LIST_HEAD(list);
 
-		WARN_ON_ONCE(rq->tag != BLK_MQ_NO_TAG);
-
 		list_add(&rq->queuelist, &list);
 		q->elevator->type->ops.insert_requests(hctx, &list, flags);
 	} else {
@@ -3069,7 +3098,8 @@ static void blk_mq_try_issue_list_directly(struct blk_mq_hw_ctx *hctx,
 		case BLK_STS_DEV_RESOURCE:
 			blk_mq_request_bypass_insert(rq, 0);
 			if (list_empty(list))
-				blk_mq_run_hw_queue(hctx, false);
+				blk_mq_run_hw_queue(hctx,
+					blk_mq_zwp_mutex(hctx) != NULL);
 			goto out;
 		default:
 			blk_mq_end_request(rq, ret);
@@ -3288,11 +3318,16 @@ new_request:
 	if (bio_zone_write_plugging(bio))
 		blk_zone_write_plug_init_request(rq);
 
-	if (op_is_flush(bio->bi_opf) && blk_insert_flush(rq))
+	trace_android_rvh_submit_bio_pre(bio, rq);
+
+	if (op_is_flush(bio->bi_opf) && blk_insert_flush(rq)) {
+		trace_android_rvh_submit_bio_post(bio, rq);
 		return;
+	}
 
 	if (plug) {
 		blk_add_rq_to_plug(plug, rq);
+		trace_android_rvh_submit_bio_post(bio, rq);
 		return;
 	}
 
@@ -3305,6 +3340,8 @@ new_request:
 	} else {
 		blk_mq_run_dispatch_ops(q, blk_mq_try_issue_directly(hctx, rq));
 	}
+
+	trace_android_rvh_submit_bio_post(bio, rq);
 	return;
 
 queue_exit:
@@ -3358,6 +3395,25 @@ blk_status_t blk_insert_cloned_request(struct request *rq)
 		return BLK_STS_IOERR;
 	}
 
+	/*
+	 * Integrity segment counting depends on the same queue limits
+	 * (virt_boundary_mask, seg_boundary_mask, max_segment_size) that
+	 * vary across stacked queues, so recompute against the bottom
+	 * queue just like nr_phys_segments above.
+	 */
+	if (blk_integrity_rq(rq) && rq->bio) {
+		unsigned short max_int_segs = queue_max_integrity_segments(q);
+
+		rq->nr_integrity_segments =
+			blk_rq_count_integrity_sg(rq->q, rq->bio);
+		if (rq->nr_integrity_segments > max_int_segs) {
+			printk(KERN_ERR "%s: over max integrity segments limit. (%u > %u)\n",
+				__func__, rq->nr_integrity_segments,
+				max_int_segs);
+			return BLK_STS_IOERR;
+		}
+	}
+
 	if (q->disk && should_fail_request(q->disk->part0, blk_rq_bytes(rq)))
 		return BLK_STS_IOERR;
 
@@ -3374,8 +3430,10 @@ blk_status_t blk_insert_cloned_request(struct request *rq)
 	 */
 	blk_mq_run_dispatch_ops(q,
 			ret = blk_mq_request_issue_directly(rq, true));
-	if (ret)
+	if (ret) {
 		blk_account_io_done(rq, blk_time_get_ns());
+		trace_android_vh_request_issue_err(rq);
+	}
 	return ret;
 }
 EXPORT_SYMBOL_GPL(blk_insert_cloned_request);
@@ -3877,9 +3935,7 @@ static int blk_mq_hctx_notify_dead(unsigned int cpu, struct hlist_node *node)
 	if (list_empty(&tmp))
 		return 0;
 
-	spin_lock(&hctx->lock);
-	list_splice_tail_init(&tmp, &hctx->dispatch);
-	spin_unlock(&hctx->lock);
+	blk_mq_reinsert_list(hctx, &tmp);
 
 	blk_mq_run_hw_queue(hctx, true);
 	return 0;
@@ -4821,38 +4877,45 @@ static void blk_mq_update_queue_map(struct blk_mq_tag_set *set)
 	}
 }
 
-static int blk_mq_realloc_tag_set_tags(struct blk_mq_tag_set *set,
-				       int new_nr_hw_queues)
+static struct blk_mq_tags **blk_mq_prealloc_tag_set_tags(
+				struct blk_mq_tag_set *set,
+				int new_nr_hw_queues)
 {
 	struct blk_mq_tags **new_tags;
 	int i;
 
 	if (set->nr_hw_queues >= new_nr_hw_queues)
-		goto done;
+		return NULL;
 
 	new_tags = kcalloc_node(new_nr_hw_queues, sizeof(struct blk_mq_tags *),
 				GFP_KERNEL, set->numa_node);
 	if (!new_tags)
-		return -ENOMEM;
+		return ERR_PTR(-ENOMEM);
 
 	if (set->tags)
 		memcpy(new_tags, set->tags, set->nr_hw_queues *
 		       sizeof(*set->tags));
-	kfree(set->tags);
-	set->tags = new_tags;
 
 	for (i = set->nr_hw_queues; i < new_nr_hw_queues; i++) {
-		if (!__blk_mq_alloc_map_and_rqs(set, i)) {
-			while (--i >= set->nr_hw_queues)
-				__blk_mq_free_map_and_rqs(set, i);
-			return -ENOMEM;
+		if (blk_mq_is_shared_tags(set->flags)) {
+			new_tags[i] = set->shared_tags;
+		} else {
+			new_tags[i] = blk_mq_alloc_map_and_rqs(set, i,
+					set->queue_depth);
+			if (!new_tags[i])
+				goto out_unwind;
 		}
 		cond_resched();
 	}
 
-done:
-	set->nr_hw_queues = new_nr_hw_queues;
-	return 0;
+	return new_tags;
+out_unwind:
+	while (--i >= set->nr_hw_queues) {
+		if (!blk_mq_is_shared_tags(set->flags))
+			blk_mq_free_map_and_rqs(set, new_tags[i], i);
+	}
+	kfree(new_tags);
+	return ERR_PTR(-ENOMEM);
 }
 
 /*
@@ -5136,6 +5199,7 @@ static void __blk_mq_update_nr_hw_queues(struct blk_mq_tag_set *set,
 	unsigned int memflags;
 	int i;
 	struct xarray elv_tbl;
+	struct blk_mq_tags **new_tags;
 	bool queues_frozen = false;
 
 	lockdep_assert_held(&set->tag_list_lock);
@@ -5170,11 +5234,18 @@ static void __blk_mq_update_nr_hw_queues(struct blk_mq_tag_set *set,
 		if (blk_mq_elv_switch_none(q, &elv_tbl))
 			goto switch_back;
 
+	new_tags = blk_mq_prealloc_tag_set_tags(set, nr_hw_queues);
+	if (IS_ERR(new_tags))
+		goto switch_back;
+
 	list_for_each_entry(q, &set->tag_list, tag_set_list)
 		blk_mq_freeze_queue_nomemsave(q);
 	queues_frozen = true;
-	if (blk_mq_realloc_tag_set_tags(set, nr_hw_queues) < 0)
-		goto switch_back;
+	if (new_tags) {
+		kfree(set->tags);
+		set->tags = new_tags;
+	}
+	set->nr_hw_queues = nr_hw_queues;
 
 fallback:
 	blk_mq_update_queue_map(set);

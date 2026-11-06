@@ -3,8 +3,10 @@
 #include <asm/fpu/xstate.h>
 #include <asm/kvm_pkvm.h>
 #include "../cpuid.h"
+#include "../x86.h"
 #include "early_alloc.h"
 #include "fpu.h"
+#include "gsmi.h"
 #include "init.h"
 #include "lapic.h"
 #include "memory.h"
@@ -59,11 +61,15 @@ static int back_vmemmap(phys_addr_t back_pa)
 	int ret;
 
 	/*
-	 * Map the vmemmap region to virtual address at page 1.
-	 * Keep page 0 unmapped, to catch NULL dereference bugs in the
+	 * Map the vmemmap region at virtual address 64KB.
+	 * Keep the lower pages unmapped, to catch NULL dereference bugs in the
 	 * hypervisor code.
+	 *
+	 * 64KB guard hole is chosen as it mimics kernel's mmap_min_addr (which
+	 * is typically set to 32KB or 64KB) and should catch most of struct
+	 * member offsets.
 	 */
-	__pkvm_vmemmap = PAGE_SIZE;
+	__pkvm_vmemmap = SZ_64K;
 
 	for (i = 0; i < pkvm_memblock_nr; i++) {
 		reg = &pkvm_memory[i];
@@ -167,6 +173,14 @@ static int create_hyp_mmu(const struct pkvm_mem_info infos[], int nr_infos)
 			return ret;
 	}
 
+	if (pkvm_ramoops_console_size) {
+		ret = pkvm_hyp_mmu_map((unsigned long)__pkvm_va(pkvm_ramoops_console_pa),
+				       pkvm_ramoops_console_pa, pkvm_ramoops_console_size,
+				       (u64)pgprot_val(PAGE_KERNEL));
+		if (ret)
+			return ret;
+	}
+
 	/* Load pKVM hypervisor's MMU to use pKVM vmemmap */
 	pkvm_hyp_mmu_load();
 
@@ -235,6 +249,10 @@ static int initialize_global(struct pkvm_mem_info infos[], int nr_infos)
 	 */
 	kvm_init_xstate_sizes();
 
+	ret = pkvm_init_gsmi();
+	if (ret)
+		return ret;
+
 	if (hyp_iommu_init) {
 		ret = hyp_iommu_init();
 		if (ret)
@@ -283,9 +301,21 @@ int pkvm_init(struct pkvm_mem_info infos[], int nr_infos)
 	if (ret)
 		return ret;
 
-	pkvm_init_percpu_fpu();
+	ret = pkvm_init_percpu_fpu();
+	if (ret)
+		return ret;
+
+	/*
+	 * Must be called after fpu initialization, as the latter affects
+	 * the fpu related bits in the supported cpuid leaves.
+	 */
+	ret = pkvm_init_cpuid();
+	if (ret)
+		return ret;
 
 	pkvm_vcpu_perf_init(this_cpu_read(host_vcpu));
+
+	kvm_user_return_msr_cpu_online();
 
 	this_cpu_write(cpu_initialized, true);
 	return 0;
@@ -332,4 +362,9 @@ int pkvm_init_finalize(void)
 	 */
 
 	return 0;
+}
+
+bool pkvm_cpu_initialized(int cpu)
+{
+	return READ_ONCE(per_cpu(cpu_initialized, cpu));
 }

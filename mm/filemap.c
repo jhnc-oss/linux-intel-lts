@@ -44,6 +44,8 @@
 #include <linux/ramfs.h>
 #include <linux/page_idle.h>
 #include <linux/page_size_compat.h>
+#include <linux/pgsize_migration.h>
+#include <linux/vma_readahead_boundary.h>
 #include <linux/migrate.h>
 #include <linux/pipe_fs_i.h>
 #include <linux/splice.h>
@@ -61,6 +63,17 @@
 #include <trace/hooks/mm.h>
 
 /*
+ * trace_android_vh_unlock_mmap_bypass is called in mm/internal.h
+ * by including trace/hooks/mm.h directly, which will result in build-err.
+ * So we create func: _trace_android_vh_unlock_mmap_bypass.
+ */
+void _trace_android_vh_unlock_mmap_bypass(struct vm_fault *vmf,
+		struct file *fpin, bool *bypass)
+{
+	trace_android_vh_unlock_mmap_bypass(vmf, fpin, bypass);
+}
+
+/*
  * FIXME: remove all knowledge of the buffer layer from the core VM
  */
 #include <linux/buffer_head.h> /* for try_to_free_buffers */
@@ -68,6 +81,12 @@
 #include <asm/mman.h>
 
 #include "swap.h"
+
+void _trace_android_rvh_mapping_shrinkable(bool *shrinkable)
+{
+	trace_android_rvh_mapping_shrinkable(shrinkable);
+}
+EXPORT_SYMBOL_GPL(_trace_android_rvh_mapping_shrinkable);
 
 /*
  * Shared mappings implemented 30.11.1994. It's not fully working yet,
@@ -248,7 +267,8 @@ void __filemap_remove_folio(struct folio *folio, void *shadow)
 }
 EXPORT_SYMBOL(__filemap_remove_folio);
 
-void filemap_free_folio(struct address_space *mapping, struct folio *folio)
+static void filemap_free_folio(const struct address_space *mapping,
+		struct folio *folio)
 {
 	void (*free_folio)(struct folio *);
 
@@ -1045,6 +1065,18 @@ struct folio *filemap_alloc_folio_noprof(gfp_t gfp, unsigned int order)
 	return folio_alloc_noprof(gfp, order);
 }
 EXPORT_SYMBOL(filemap_alloc_folio_noprof);
+#else
+/*
+ * trace_android_vh_filemap_alloc_folio is called in include/linux/pagemap.h
+ * by including include/trace/hooks/mm.h, which will result to build-err.
+ * So we create func: _trace_android_vh_filemap_alloc_folio.
+ */
+void _trace_android_vh_filemap_alloc_folio(gfp_t gfp, unsigned int order,
+					   bool *alloc_fail)
+{
+	trace_android_vh_filemap_alloc_folio(gfp, order, alloc_fail);
+}
+EXPORT_SYMBOL_GPL(_trace_android_vh_filemap_alloc_folio);
 #endif
 
 /*
@@ -1979,6 +2011,8 @@ repeat:
 	folio = filemap_get_entry(mapping, index);
 	if (xa_is_value(folio))
 		folio = NULL;
+	trace_android_vh_filemap_get_folio(mapping, index, fgp_flags,
+					gfp, folio);
 	if (!folio)
 		goto no_page;
 
@@ -3300,12 +3334,19 @@ static struct file *do_sync_mmap_readahead(struct vm_fault *vmf)
 {
 	struct file *file = vmf->vma->vm_file;
 	struct file_ra_state *ra = &file->f_ra;
-	DEFINE_RA_MMAP_MISS(ra);
 	struct address_space *mapping = file->f_mapping;
 	DEFINE_READAHEAD(ractl, file, ra, mapping, vmf->pgoff);
 	struct file *fpin = NULL;
 	vm_flags_t vm_flags = vmf->vma->vm_flags;
 	unsigned short mmap_miss;
+	bool skip = false;
+
+	trace_android_vh_do_sync_mmap_readahead(vmf, &skip);
+	if (skip)
+		return fpin;
+
+	if (is_vma_readahead_boundary_enabled())
+		ractl._max_index = vmf->vma->vm_pgoff + vma_data_pages(vmf->vma) - 1;
 
 #ifdef CONFIG_TRANSPARENT_HUGEPAGE
 	/* Use the readahead code, even if readahead is disabled */
@@ -3320,7 +3361,7 @@ static struct file *do_sync_mmap_readahead(struct vm_fault *vmf)
 		if (!(vm_flags & VM_RAND_READ))
 			ra->size *= 2;
 		ra->async_size = HPAGE_PMD_NR;
-		ra_mmap_miss->order = HPAGE_PMD_ORDER;
+		ra->order = HPAGE_PMD_ORDER;
 		page_cache_ra_order(&ractl, ra);
 		return fpin;
 	}
@@ -3345,9 +3386,9 @@ static struct file *do_sync_mmap_readahead(struct vm_fault *vmf)
 	}
 
 	/* Avoid banging the cache line if not needed */
-	mmap_miss = READ_ONCE(ra_mmap_miss->mmap_miss);
+	mmap_miss = READ_ONCE(ra->mmap_miss);
 	if (mmap_miss < MMAP_LOTSAMISS * 10)
-		WRITE_ONCE(ra_mmap_miss->mmap_miss, ++mmap_miss);
+		WRITE_ONCE(ra->mmap_miss, ++mmap_miss);
 
 	/*
 	 * Do we miss much more than hit in this file? If so,
@@ -3370,7 +3411,7 @@ static struct file *do_sync_mmap_readahead(struct vm_fault *vmf)
 		 */
 		struct vm_area_struct *vma = vmf->vma;
 		unsigned long start = vma->vm_pgoff;
-		unsigned long end = start + vma_pages(vma);
+		unsigned long end = start + vma_data_pages(vma);
 		unsigned long ra_end;
 
 		ra->order = exec_folio_order();
@@ -3385,17 +3426,21 @@ static struct file *do_sync_mmap_readahead(struct vm_fault *vmf)
 		 * mmap read-around
 		 */
 		ra->start = max_t(long, 0, vmf->pgoff - ra->ra_pages / 2);
+		if (is_vma_readahead_boundary_enabled())
+			ra->start = max(ra->start, vmf->vma->vm_pgoff);
 		ra->size = ra->ra_pages;
 		ra->async_size = ra->ra_pages / 4;
-		ra_mmap_miss->order = 0;
+		ra->order = 0;
 	}
 
 	fpin = maybe_unlock_mmap_for_io(vmf, fpin);
 	trace_android_vh_tune_mmap_readaround(ra->ra_pages, vmf->pgoff,
 			&ra->start, &ra->size, &ra->async_size);
 	ractl._index = ra->start;
+	trace_android_vh_page_cache_read(file->f_inode, ra->start, ra->size);
 	trace_android_vh_page_cache_readahead_start(file, vmf->pgoff,
 			ra->size, true);
+	trace_android_vh_customize_ractl(&ractl, ra, vmf->vma, false);
 	page_cache_ra_order(&ractl, ra);
 	trace_android_vh_page_cache_readahead_end(file, vmf->pgoff);
 	return fpin;
@@ -3411,7 +3456,6 @@ static struct file *do_async_mmap_readahead(struct vm_fault *vmf,
 {
 	struct file *file = vmf->vma->vm_file;
 	struct file_ra_state *ra = &file->f_ra;
-	DEFINE_RA_MMAP_MISS(ra);
 	DEFINE_READAHEAD(ractl, file, ra, file->f_mapping, vmf->pgoff);
 	struct file *fpin = NULL;
 	unsigned short mmap_miss;
@@ -3432,12 +3476,14 @@ static struct file *do_async_mmap_readahead(struct vm_fault *vmf,
 	 * increase in do_sync_mmap_readahead().
 	 */
 	if (likely(!folio_test_locked(folio))) {
-		mmap_miss = READ_ONCE(ra_mmap_miss->mmap_miss);
+		mmap_miss = READ_ONCE(ra->mmap_miss);
 		if (mmap_miss)
-			WRITE_ONCE(ra_mmap_miss->mmap_miss, --mmap_miss);
+			WRITE_ONCE(ra->mmap_miss, --mmap_miss);
 	}
 
 	if (folio_test_readahead(folio)) {
+		if (is_vma_readahead_boundary_enabled())
+			ractl._max_index = vmf->vma->vm_pgoff + vma_data_pages(vmf->vma) - 1;
 		fpin = maybe_unlock_mmap_for_io(vmf, fpin);
 		trace_android_vh_page_cache_readahead_start(file, vmf->pgoff,
 				ra->ra_pages, false);
@@ -3525,9 +3571,13 @@ vm_fault_t filemap_fault(struct vm_fault *vmf)
 	vm_fault_t ret = 0;
 	bool mapping_locked = false;
 
-	max_idx = DIV_ROUND_UP(i_size_read(inode), PAGE_SIZE);
+	max_idx = DIV_ROUND_UP(i_size_read(inode), __PAGE_SIZE) * (__PAGE_SIZE / PAGE_SIZE);
 	if (unlikely(index >= max_idx))
 		return VM_FAULT_SIGBUS;
+
+	max_idx = DIV_ROUND_UP(i_size_read(inode), PAGE_SIZE);
+	if (unlikely(index >= max_idx))
+		return VM_FAULT_NEED_ANONPAGE;
 
 	trace_mm_filemap_fault(mapping, index);
 
@@ -3631,11 +3681,17 @@ retry_find:
 	 * Found the page and have a reference on it.
 	 * We must recheck i_size under page lock.
 	 */
-	max_idx = DIV_ROUND_UP(i_size_read(inode), PAGE_SIZE);
+	max_idx = DIV_ROUND_UP(i_size_read(inode), __PAGE_SIZE) * (__PAGE_SIZE / PAGE_SIZE);
 	if (unlikely(index >= max_idx)) {
 		folio_unlock(folio);
 		folio_put(folio);
 		return VM_FAULT_SIGBUS;
+	}
+
+	max_idx = DIV_ROUND_UP(i_size_read(inode), PAGE_SIZE);
+	if (unlikely(index >= max_idx)) {
+		folio_unlock(folio);
+		return VM_FAULT_NEED_ANONPAGE;
 	}
 
 	vmf->page = folio_file_page(folio, index);
@@ -3869,6 +3925,7 @@ static vm_fault_t filemap_map_order0_folio(struct vm_fault *vmf,
 
 	set_pte_range(vmf, folio, page, 1, addr);
 	(*rss)++;
+	trace_android_vh_map_order0_folio(vmf->vma->vm_file, vmf->pgoff, folio, ret);
 	return ret;
 
 out:
@@ -3890,18 +3947,24 @@ vm_fault_t filemap_map_pages(struct vm_fault *vmf,
 	vm_fault_t ret = 0;
 	unsigned long rss = 0;
 	unsigned int nr_pages = 0, folio_type;
-	DEFINE_RA_MMAP_MISS(&file->f_ra);
 	unsigned short mmap_miss = 0, mmap_miss_saved;
 	pgoff_t first_pgoff = 0;
+	pgoff_t orig_start_pgoff = start_pgoff;
+
+	/*
+	 * Recalculate end_pgoff based on file_end before calling
+	 * next_uptodate_folio() to avoid races with concurrent
+	 * truncation.
+	 */
+	file_end = DIV_ROUND_UP(i_size_read(mapping->host), PAGE_SIZE) - 1;
+	end_pgoff = min(end_pgoff, file_end);
 
 	rcu_read_lock();
 	folio = next_uptodate_folio(&xas, mapping, end_pgoff);
 	if (!folio)
 		goto out;
 	first_pgoff = xas.xa_index;
-
-	file_end = DIV_ROUND_UP(i_size_read(mapping->host), PAGE_SIZE) - 1;
-	end_pgoff = min(end_pgoff, file_end);
+	orig_start_pgoff = xas.xa_index;
 
 	/*
 	 * Do not allow to map with PMD across i_size to preserve
@@ -3952,12 +4015,13 @@ vm_fault_t filemap_map_pages(struct vm_fault *vmf,
 out:
 	rcu_read_unlock();
 
-	mmap_miss_saved = READ_ONCE(ra_mmap_miss->mmap_miss);
+	mmap_miss_saved = READ_ONCE(file->f_ra.mmap_miss);
 	if (mmap_miss >= mmap_miss_saved)
-		WRITE_ONCE(ra_mmap_miss->mmap_miss, 0);
+		WRITE_ONCE(file->f_ra.mmap_miss, 0);
 	else
 		WRITE_ONCE(file->f_ra.mmap_miss, mmap_miss_saved - mmap_miss);
-	trace_android_vh_filemap_map_pages(file, first_pgoff, last_pgoff, ret);
+	trace_android_vh_filemap_map_pages(file, orig_start_pgoff,
+					first_pgoff, last_pgoff, ret);
 
 	return ret;
 }
@@ -4071,6 +4135,7 @@ static struct folio *do_read_cache_folio(struct address_space *mapping,
 	struct folio *folio;
 	int err;
 
+	trace_android_vh_page_cache_read(mapping->host, index, 1);
 	if (!filler)
 		filler = mapping->a_ops->read_folio;
 repeat:
@@ -4241,11 +4306,14 @@ void kiocb_invalidate_post_direct_write(struct kiocb *iocb, size_t count)
 {
 	struct address_space *mapping = iocb->ki_filp->f_mapping;
 
-	if (mapping->nrpages &&
-	    invalidate_inode_pages2_range(mapping,
-			iocb->ki_pos >> PAGE_SHIFT,
-			(iocb->ki_pos + count - 1) >> PAGE_SHIFT))
-		dio_warn_stale_pagecache(iocb->ki_filp);
+	if (mapping->nrpages) {
+		if (invalidate_inode_pages2_range(mapping,
+				iocb->ki_pos >> PAGE_SHIFT,
+				(iocb->ki_pos + count - 1) >> PAGE_SHIFT))
+			dio_warn_stale_pagecache(iocb->ki_filp);
+	} else {
+		cleancache_invalidate_inode(mapping);
+	}
 }
 
 ssize_t
@@ -4361,6 +4429,7 @@ retry:
 			if (unlikely(status < 0))
 				break;
 		}
+		trace_android_vh_io_statistics(mapping, folio->index, 1, false, false);
 		cond_resched();
 
 		if (unlikely(status == 0)) {
@@ -4692,7 +4761,7 @@ static inline bool can_do_cachestat(struct file *f)
 {
 	if (f->f_mode & FMODE_WRITE)
 		return true;
-	if (inode_owner_or_capable(file_mnt_idmap(f), file_inode(f)))
+	if (file_owner_or_capable(f))
 		return true;
 	return file_permission(f, MAY_WRITE) == 0;
 }

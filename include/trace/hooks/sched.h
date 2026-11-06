@@ -1,6 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 #undef TRACE_SYSTEM
 #define TRACE_SYSTEM sched
+#undef TRACE_INCLUDE_PATH
 #define TRACE_INCLUDE_PATH trace/hooks
 #if !defined(_TRACE_HOOK_SCHED_H) || defined(TRACE_HEADER_MULTI_READ)
 #define _TRACE_HOOK_SCHED_H
@@ -279,6 +280,14 @@ DECLARE_HOOK(android_vh_free_task,
 	TP_PROTO(struct task_struct *p),
 	TP_ARGS(p));
 
+DECLARE_HOOK(android_vh_mmap_lock_init,
+	TP_PROTO(struct rw_semaphore *sem),
+	TP_ARGS(sem));
+
+DECLARE_HOOK(android_vh_mmap_lock_free,
+	TP_PROTO(struct rw_semaphore *sem),
+	TP_ARGS(sem));
+
 DECLARE_HOOK(android_vh_irqtime_account_process_tick,
 	TP_PROTO(struct task_struct *p, struct rq *rq, int user_tick, int ticks),
 	TP_ARGS(p, rq, user_tick, ticks));
@@ -368,6 +377,11 @@ DECLARE_HOOK(android_vh_dup_task_struct,
 	TP_ARGS(tsk, orig));
 
 struct affinity_context;
+
+DECLARE_HOOK(android_vh_sca_migrate_same,
+	TP_PROTO(struct task_struct *p, struct affinity_context *ctx),
+	TP_ARGS(p, ctx));
+
 DECLARE_HOOK(android_vh_scx_restore_flags,
 	TP_PROTO(const struct sched_class *prev_class,
 		 const struct sched_class *next_class,
@@ -406,6 +420,9 @@ DECLARE_HOOK(android_vh_scx_task_switch_finish,
 DECLARE_HOOK(android_vh_scx_task_can_run_on,
 	TP_PROTO(bool *disallow, struct task_struct *p, struct rq *rq),
 	TP_ARGS(disallow, p, rq));
+DECLARE_HOOK(android_vh_scx_cpu_allowed,
+	TP_PROTO(struct task_struct *p, int cpu, bool *allowed),
+	TP_ARGS(p, cpu, allowed));
 
 struct scx_exit_info;
 DECLARE_HOOK(android_vh_scx_exit_on_abnormal,
@@ -418,6 +435,10 @@ DECLARE_HOOK(android_vh_switching_to_scx,
 DECLARE_RESTRICTED_HOOK(android_rvh_update_rq_clock_pelt,
 	TP_PROTO(struct rq *rq, s64 delta, int *ret),
 	TP_ARGS(rq, delta, ret), 1);
+
+DECLARE_RESTRICTED_HOOK(android_rvh_update_load_sum,
+	TP_PROTO(int *force_update),
+	TP_ARGS(force_update), 1);
 
 DECLARE_RESTRICTED_HOOK(android_rvh_update_load_avg_blocked_se,
 	TP_PROTO(u64 now, struct sched_entity *se, int *ret),
@@ -550,6 +571,19 @@ DECLARE_RESTRICTED_HOOK(android_rvh_util_fits_cpu,
 DECLARE_RESTRICTED_HOOK(android_rvh_dequeue_entity_delayed,
 	TP_PROTO(struct cfs_rq *cfs_rq, struct sched_entity *se, bool *delay),
 	TP_ARGS(cfs_rq, se, delay), 1);
+
+DECLARE_RESTRICTED_HOOK(android_rvh_fair_dl_server_start,
+	TP_PROTO(struct rq *rq, bool *start_server),
+	TP_ARGS(rq, start_server), 1);
+
+DECLARE_RESTRICTED_HOOK(android_rvh_dl_server_stop_skip,
+	TP_PROTO(struct sched_dl_entity *dl_se, struct rq *rq, struct task_struct *p, bool *skip),
+	TP_ARGS(dl_se, rq, p, skip), 1);
+
+DECLARE_RESTRICTED_HOOK(android_rvh_task_fits_cpu,
+	TP_PROTO(struct task_struct *tsk, unsigned long util, unsigned long uclamp_min,
+		 unsigned long uclamp_max, int cpu, bool *fits, bool *done),
+	TP_ARGS(tsk, util, uclamp_min, uclamp_max, cpu, fits, done), 1);
 
 /* macro versions of hooks are no longer required */
 #endif /* _TRACE_HOOK_SCHED_H */

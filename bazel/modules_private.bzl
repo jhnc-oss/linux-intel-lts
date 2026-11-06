@@ -10,6 +10,7 @@ visibility("private")
 
 _COMMON_GKI_MODULES_LIST = [
     # keep sorted
+    "drivers/android/binder/rust_binder.ko",
     "drivers/block/virtio_blk.ko",
     "drivers/block/zram/zram.ko",
     "drivers/bluetooth/btbcm.ko",
@@ -91,10 +92,6 @@ _COMMON_GKI_MODULES_LIST = [
     "net/vmw_vsock/vmw_vsock_virtio_transport.ko",
 ]
 
-_RUST_GKI_MODULES_LIST = [
-    "drivers/android/binder/rust_binder.ko",
-]
-
 _ARM_GKI_MODULES_LIST = [
     # keep sorted
 ]
@@ -103,6 +100,12 @@ _ARM64_GKI_MODULES_LIST = [
     # keep sorted
     "arch/arm64/geniezone/gzvm.ko",
     "drivers/char/hw_random/cctrng.ko",
+    "drivers/hwtracing/coresight/coresight.ko",
+    "drivers/hwtracing/coresight/coresight-etm4x.ko",
+    "drivers/hwtracing/coresight/coresight-funnel.ko",
+    "drivers/hwtracing/coresight/coresight-replicator.ko",
+    "drivers/hwtracing/coresight/coresight-trbe.ko",
+    "drivers/perf/dwc_pcie_pmu.ko",
 ]
 
 _X86_GKI_MODULES_LIST = [
@@ -171,15 +174,9 @@ def get_gki_modules_list(arch = None, map_each = None):
         list comprehension); instead, use the |map_each| argument.
     """
 
-    ret = _get_gki_modules_list_minus_select(arch, map_each)
-
-    # CONFIG_RUST depends on !CONFIG_KASAN_SW_TAGS
-    ret += select({
-        "//build/kernel/kleaf:kasan_sw_tags_is_true": [],
-        "//conditions:default": _apply(map_each, _RUST_GKI_MODULES_LIST),
+    return select({
+        "//conditions:default": _get_gki_modules_list_minus_select(arch, map_each),
     })
-
-    return ret
 
 # buildifier: disable=unnamed-macro
 def get_gki_modules_superset(arch = None, map_each = None):
@@ -198,8 +195,7 @@ def get_gki_modules_superset(arch = None, map_each = None):
     Returns:
         A list that contains the superset of GKI modules for the given |arch|.
     """
-    return _get_gki_modules_list_minus_select(arch, map_each) + \
-           _apply(map_each, _RUST_GKI_MODULES_LIST)
+    return _get_gki_modules_list_minus_select(arch, map_each)
 
 _KUNIT_FRAMEWORK_MODULES = [
     "lib/kunit/kunit.ko",
@@ -304,6 +300,11 @@ def get_kunit_modules_superset(arch = None, map_each = None):
 
 _COMMON_UNPROTECTED_MODULES_LIST = [
     "drivers/block/zram/zram.ko",
+    "drivers/hwtracing/coresight/coresight.ko",
+    "drivers/hwtracing/coresight/coresight-etm4x.ko",
+    "drivers/hwtracing/coresight/coresight-funnel.ko",
+    "drivers/hwtracing/coresight/coresight-replicator.ko",
+    "drivers/hwtracing/coresight/coresight-trbe.ko",
     "mm/zsmalloc.ko",
 ]
 

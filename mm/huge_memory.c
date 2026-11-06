@@ -600,6 +600,7 @@ static const struct kobj_type thpsize_ktype = {
 };
 
 DEFINE_PER_CPU(struct mthp_stat, mthp_stats) = {{{0}}};
+EXPORT_SYMBOL_GPL(mthp_stats);
 
 static unsigned long sum_mthp_stat(int order, enum mthp_stat_item item)
 {
@@ -2749,9 +2750,9 @@ static void __split_huge_pud_locked(struct vm_area_struct *vma, pud_t *pud,
 	if (!folio_test_referenced(folio) && pud_young(old_pud))
 		folio_set_referenced(folio);
 	folio_remove_rmap_pud(folio, page, vma);
-	folio_put(folio);
 	add_mm_counter(vma->vm_mm, mm_counter_file(folio),
 		-HPAGE_PUD_NR);
+	folio_put(folio);
 }
 
 void __split_huge_pud(struct vm_area_struct *vma, pud_t *pud,
@@ -2867,7 +2868,9 @@ static void __split_huge_pmd_locked(struct vm_area_struct *vma, pmd_t *pmd,
 			if (!folio_test_referenced(folio) && pmd_young(old_pmd))
 				folio_set_referenced(folio);
 			folio_remove_rmap_pmd(folio, page, vma);
+			add_mm_counter(mm, mm_counter_file(folio), -HPAGE_PMD_NR);
 			folio_put(folio);
+			return;
 		}
 		add_mm_counter(mm, mm_counter_file(folio), -HPAGE_PMD_NR);
 		return;
@@ -3517,6 +3520,8 @@ static int __split_unmapped_folio(struct folio *folio, int new_order,
 bool folio_split_supported(struct folio *folio, unsigned int new_order,
 		bool uniform_split, bool warns)
 {
+	bool supported = true;
+
 	if (folio_test_anon(folio)) {
 		/* order-1 is not supported for anonymous THP. */
 		VM_WARN_ONCE(warns && new_order == 1,
@@ -3562,6 +3567,10 @@ bool folio_split_supported(struct folio *folio, unsigned int new_order,
 			"Cannot split swapcache folio to non-0 order");
 		return false;
 	}
+
+	trace_android_vh_mm_folio_split_supported(folio, new_order, uniform_split, &supported);
+	if (!supported)
+		return false;
 
 	return true;
 }
@@ -3697,6 +3706,11 @@ static int __folio_split(struct folio *folio, unsigned int new_order,
 	}
 
 	trace_android_vh_mm_split_huge_page_bypass(folio, list, &ret, &bypass);
+	if (bypass)
+		goto out_unlock;
+
+	trace_android_rvh_mm_folio_split_bypass(folio, new_order, list,
+			uniform_split, &xas, end, &ret, &bypass);
 	if (bypass)
 		goto out_unlock;
 

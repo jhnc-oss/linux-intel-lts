@@ -205,7 +205,8 @@ reassess:
 	 * in progress.  The issuer thread may be adding stuff to the tail
 	 * whilst we're doing this.
 	 */
-	front = READ_ONCE(stream->front);
+	front = list_first_entry_or_null(&stream->subrequests,
+					 struct netfs_io_subrequest, rreq_link);
 	while (front) {
 		size_t transferred;
 
@@ -301,7 +302,6 @@ reassess:
 		list_del_init(&front->rreq_link);
 		front = list_first_entry_or_null(&stream->subrequests,
 						 struct netfs_io_subrequest, rreq_link);
-		stream->front = front;
 		spin_unlock(&rreq->lock);
 		netfs_put_subrequest(remove,
 				     notes & ABANDON_SREQ ?
@@ -574,6 +574,17 @@ skip_error_checks:
 	netfs_put_subrequest(subreq, netfs_sreq_trace_put_terminated);
 }
 EXPORT_SYMBOL(netfs_read_subreq_terminated);
+
+/*
+ * Cancel a read subrequest due to preparation failure.
+ */
+void netfs_cancel_read(struct netfs_io_subrequest *subreq, int error)
+{
+	trace_netfs_sreq(subreq, netfs_sreq_trace_cancel);
+	subreq->error = error;
+	__set_bit(NETFS_SREQ_FAILED, &subreq->flags);
+	netfs_read_subreq_terminated(subreq);
+}
 
 /*
  * Handle termination of a read from the cache.

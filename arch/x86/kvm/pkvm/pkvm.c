@@ -9,6 +9,7 @@
 #include "mem_protect.h"
 #include "memory.h"
 #include "mmu.h"
+#include "panic.h"
 #include "pkvm.h"
 #include "trace.h"
 #include "../x86.h"
@@ -33,6 +34,12 @@ struct pkvm_hyp *pkvm_hyp;
 DEFINE_PER_CPU(struct pkvm_pcpu *, phys_cpu);
 DEFINE_PER_CPU(struct kvm_vcpu *, host_vcpu);
 DEFINE_PER_CPU(bool, host_vcpu_fixup);
+
+phys_addr_t pkvm_ramoops_console_pa;
+size_t pkvm_ramoops_console_size;
+
+unsigned long kaslr_offset_val;
+
 /*
  * similarly pmu.c is not compiled. define kvm_mmu_cap here for the use
  * in cpuid.c
@@ -70,13 +77,6 @@ static struct pkvm_x86_ops pkvm_x86_ops __read_mostly;
 static int __pkvm_vcpu_free(struct pkvm_vm *pkvm_vm, int vcpu_handle,
 			    struct pkvm_memcache *mc);
 
-static int pkvm_enable_virtualization_cpu(void)
-{
-	kvm_user_return_msr_cpu_online();
-
-	return kvm_x86_call(enable_virtualization_cpu)();
-}
-
 static int allocate_pkvm_vm_handle(struct pkvm_vm *pkvm_vm)
 {
 	struct pkvm_vm_ref *pkvm_vm_ref;
@@ -91,6 +91,7 @@ static int allocate_pkvm_vm_handle(struct pkvm_vm *pkvm_vm)
 	}
 	__set_bit(idx, pkvm_vms_bitmap);
 
+	pkvm_vm->kvm.arch.pkvm.handle = idx;
 	pkvm_vm_ref = &pkvm_vms_ref[idx];
 	pkvm_vm_ref->pkvm_vm = pkvm_vm;
 	atomic_set(&pkvm_vm_ref->refcount, 1);
@@ -103,11 +104,11 @@ static int allocate_pkvm_vm_handle(struct pkvm_vm *pkvm_vm)
 static struct pkvm_vm *free_pkvm_vm_handle(int handle)
 {
 	struct pkvm_vm_ref *pkvm_vm_ref;
-	struct pkvm_vm *pkvm_vm = NULL;
+	struct pkvm_vm *pkvm_vm;
 	int idx = handle;
 
 	if (idx < 0 || idx >= MAX_PKVM_VMS)
-		return NULL;
+		return ERR_PTR(-EINVAL);
 
 	pkvm_spin_lock(&pkvm_vms_lock);
 
@@ -116,14 +117,16 @@ static struct pkvm_vm *free_pkvm_vm_handle(int handle)
 	if (atomic_cmpxchg(&pkvm_vm_ref->refcount, 1, 0) != 1) {
 		pkvm_err("VM%d is busy, refcount %d\n", handle,
 			 atomic_read(&pkvm_vm_ref->refcount));
-		goto out;
+		pkvm_spin_unlock(&pkvm_vms_lock);
+		return ERR_PTR(-EBUSY);
 	}
 
 	pkvm_vm = pkvm_vm_ref->pkvm_vm;
+	BUG_ON(!pkvm_vm);
 	pkvm_vm_ref->pkvm_vm = NULL;
 
 	__clear_bit(idx, pkvm_vms_bitmap);
-out:
+
 	pkvm_spin_unlock(&pkvm_vms_lock);
 	return pkvm_vm;
 }
@@ -178,8 +181,6 @@ static int pkvm_vm_init(phys_addr_t host_kvm_pa, phys_addr_t pkvm_vm_pa,
 	if (ret < 0)
 		goto mmu_destroy;
 
-	kvm->arch.pkvm.handle = ret;
-
 	ret = kvm_x86_call(vm_init)(kvm);
 	if (ret)
 		goto free_handle;
@@ -214,14 +215,14 @@ static void teardown_donated_memory(struct pkvm_memcache *mc, void *addr, size_t
 	pkvm_hyp_donate_host(__pkvm_pa(addr), size, false);
 }
 
-static void pkvm_vm_destroy(int vm_handle, struct pkvm_memcache *mc)
+static int pkvm_vm_destroy(int vm_handle, struct pkvm_memcache *mc)
 {
 	struct pkvm_vm *pkvm_vm = free_pkvm_vm_handle(vm_handle);
 	unsigned long shared_kvm_pa;
 	int i;
 
-	if (!pkvm_vm)
-		return;
+	if (IS_ERR(pkvm_vm))
+		return PTR_ERR(pkvm_vm);
 
 	memset(mc, 0, sizeof(*mc));
 
@@ -242,6 +243,8 @@ static void pkvm_vm_destroy(int vm_handle, struct pkvm_memcache *mc)
 	teardown_donated_memory(mc, (void *)pkvm_vm, pkvm_vm->size);
 
 	pkvm_host_unshare_hyp(shared_kvm_pa, kvm_x86_ops.vm_size);
+
+	return 0;
 }
 
 static int attach_pkvm_vcpu_to_vm(struct pkvm_vm *pkvm_vm, struct pkvm_vcpu *pkvm_vcpu)
@@ -295,18 +298,17 @@ static struct pkvm_vcpu *detach_pkvm_vcpu_from_vm(struct pkvm_vm *pkvm_vm, int v
 	return pkvm_vcpu;
 }
 
-static int setup_vcpu_lapic(struct kvm_vcpu *vcpu)
+static int setup_vcpu_lapic(struct kvm_vcpu *vcpu, struct kvm_lapic *shared_apic)
 {
-	struct kvm_lapic *apic = vcpu->arch.apic, *shared_apic;
 	struct pkvm_vcpu *pkvm_vcpu = to_pkvm_vcpu(vcpu);
 	size_t apic_size = sizeof(struct kvm_lapic);
+	struct kvm_lapic *apic = vcpu->arch.apic;
 	void *shared_lapic_regs = NULL;
 	int ret;
 
-	if (!apic)
+	if (!apic || WARN_ON(!shared_apic))
 		return 0;
 
-	shared_apic = kern_pkvm_va(pkvm_vcpu->shared_vcpu->arch.apic);
 	/*
 	 * Temporary sharing host's apic structure to access its elements for
 	 * setting up pKVM's apic structure. It will be unshared after that.
@@ -315,7 +317,7 @@ static int setup_vcpu_lapic(struct kvm_vcpu *vcpu)
 	if (ret)
 		return ret;
 
-	shared_lapic_regs = kern_pkvm_va(shared_apic->regs);
+	shared_lapic_regs = kern_pkvm_va(READ_ONCE(shared_apic->regs));
 	if (!shared_lapic_regs) {
 		ret = -EINVAL;
 		goto unshare_apic;
@@ -360,11 +362,20 @@ unshare_apic:
 	return ret;
 }
 
+/*
+ * TODO: simplify the code by consolidating pkvm_vm_finalize() and
+ * postponed_per_vm_setup(). I.e. instead of finalizing the VM before
+ * running the first vCPU and using a dedicated hypercall for that,
+ * finalize it when creating the first vCPU, same way as the setup in
+ * postponed_per_vm_setup(), and then combine postponed_per_vm_setup()
+ * into pkvm_vm_finalize().
+ */
 static int pkvm_vm_finalize(int vm_handle)
 {
 	struct kvm *kvm, *shared_kvm;
 	struct pkvm_vm *pkvm_vm;
-	u64 pvmfw_load_addr;
+	struct kvm_vcpu *vcpu;
+	gpa_t pvmfw_load_addr;
 	int ret = 0, i;
 
 	pkvm_vm = pkvm_get_vm(vm_handle);
@@ -388,16 +399,18 @@ static int pkvm_vm_finalize(int vm_handle)
 
 	pvmfw_load_addr = READ_ONCE(shared_kvm->arch.pkvm.pvmfw_load_addr);
 	if (pvmfw_load_addr != INVALID_GPA) {
-		if (!pvmfw_present || U64_MAX - pvmfw_load_addr < pvmfw_size) {
+		gpa_t pvmfw_end = pvmfw_load_addr + pvmfw_size;
+
+		if (!pvmfw_present || pvmfw_end < pvmfw_load_addr ||
+		    pvmfw_end > pkvm_pgtable_max_size(&pkvm_vm->mmu) ||
+		    pvmfw_end > SZ_4G) {
 			ret = -EINVAL;
 			goto unlock;
 		}
 		kvm->arch.pkvm.pvmfw_load_addr = pvmfw_load_addr;
 	}
 
-	for (i = 0; i < kvm->created_vcpus; i++) {
-		struct kvm_vcpu *vcpu = &pkvm_vm->vcpus[i]->vcpu;
-
+	for_each_pkvm_guest_vcpu(i, vcpu, pkvm_vm) {
 		if (vcpu->vcpu_id == kvm->arch.bsp_vcpu_id) {
 			/*
 			 * Make sure pvmfw_load_addr and bsp_vcpu_id are updated before
@@ -409,7 +422,8 @@ static int pkvm_vm_finalize(int vm_handle)
 		}
 	}
 
-	kvm->arch.pkvm.finalized = true;
+	/* Pairs with smp_load_acquire() in pkvm_host_donate_guest(). */
+	smp_store_release(&kvm->arch.pkvm.finalized, true);
 	shared_kvm->arch.pkvm.finalized = true;
 unlock:
 	pkvm_spin_unlock(&pkvm_vm->lock);
@@ -478,20 +492,34 @@ static void pkvm_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
 	}
 }
 
-static int __vcpu_create(struct kvm *kvm, struct kvm_vcpu *vcpu, struct fpstate *fps)
+static int postponed_per_vm_setup(struct kvm *kvm)
 {
-	struct pkvm_vcpu *pkvm_vcpu = to_pkvm_vcpu(vcpu);
-	int ret = kvm_x86_call(vcpu_precreate)(kvm);
 	struct pkvm_vm *pkvm_vm = to_pkvm(kvm);
-	void *unused = (void *)pkvm_vcpu +
-		       PKVM_VCPU_BASE_SIZE +
-		       kvm_vcpu_sz;
-	int cpu = raw_smp_processor_id();
+	struct kvm *shared_kvm = pkvm_vm->shared_kvm;
+	enum kvm_irqchip_mode irqchip_mode;
+	u32 max_vcpu_ids, bsp_vcpu_id;
+	u64 apic_bus_cycle_ns;
 
-	if (ret)
-		return ret;
+	if (pkvm_vm->postponed_setup_done)
+		return 0;
 
-	pkvm_spin_lock(&pkvm_vm->lock);
+	irqchip_mode = READ_ONCE(shared_kvm->arch.irqchip_mode);
+	if (irqchip_mode != KVM_IRQCHIP_NONE &&
+	    irqchip_mode != KVM_IRQCHIP_KERNEL &&
+	    irqchip_mode != KVM_IRQCHIP_SPLIT)
+		return -EINVAL;
+
+	max_vcpu_ids = READ_ONCE(shared_kvm->arch.max_vcpu_ids);
+	if (!max_vcpu_ids || max_vcpu_ids > KVM_MAX_VCPU_IDS)
+		return -EINVAL;
+
+	bsp_vcpu_id = READ_ONCE(shared_kvm->arch.bsp_vcpu_id);
+	if (bsp_vcpu_id >= max_vcpu_ids)
+		return -EINVAL;
+
+	apic_bus_cycle_ns = READ_ONCE(shared_kvm->arch.apic_bus_cycle_ns);
+	if (!apic_bus_cycle_ns)
+		return -EINVAL;
 
 	/*
 	 * The following setup is per VM, not per vCPU, however it cannot be
@@ -502,23 +530,52 @@ static int __vcpu_create(struct kvm *kvm, struct kvm_vcpu *vcpu, struct fpstate 
 	 * creating vCPUs. So it is ok to assume these host's values here are
 	 * up-to-date.
 	 */
-	if (!kvm->arch.bus_lock_detection_enabled &&
-	    pkvm_vm->shared_kvm->arch.bus_lock_detection_enabled &&
-	    kvm_caps.has_bus_lock_exit)
-		kvm->arch.bus_lock_detection_enabled = true;
-	if (!kvm->arch.notify_vmexit_flags &&
-	    pkvm_vm->shared_kvm->arch.notify_vmexit_flags &&
-	    kvm_caps.has_notify_vmexit) {
-		kvm->arch.notify_window = pkvm_vm->shared_kvm->arch.notify_window;
-		kvm->arch.notify_vmexit_flags = pkvm_vm->shared_kvm->arch.notify_vmexit_flags;
-	}
-	if (pkvm_vm->shared_kvm->arch.apic_bus_cycle_ns)
-		kvm->arch.apic_bus_cycle_ns = pkvm_vm->shared_kvm->arch.apic_bus_cycle_ns;
-	if (!pkvm_is_protected_vm(kvm))
-		kvm->arch.disabled_exits = pkvm_vm->shared_kvm->arch.disabled_exits;
 
-	if (!kvm->created_vcpus)
-		kvm->arch.bsp_vcpu_id = pkvm_vm->shared_kvm->arch.bsp_vcpu_id;
+	kvm->arch.irqchip_mode = irqchip_mode;
+	kvm->arch.max_vcpu_ids = max_vcpu_ids;
+	kvm->arch.bsp_vcpu_id = bsp_vcpu_id;
+	kvm->arch.apic_bus_cycle_ns = apic_bus_cycle_ns;
+
+	if (kvm_caps.has_bus_lock_exit)
+		kvm->arch.bus_lock_detection_enabled =
+			shared_kvm->arch.bus_lock_detection_enabled;
+
+	if (kvm_caps.has_notify_vmexit) {
+		kvm->arch.notify_window = shared_kvm->arch.notify_window;
+		kvm->arch.notify_vmexit_flags = shared_kvm->arch.notify_vmexit_flags;
+	}
+
+	if (!pkvm_is_protected_vm(kvm))
+		kvm->arch.disabled_exits = shared_kvm->arch.disabled_exits;
+
+	pkvm_vm->postponed_setup_done = true;
+	return 0;
+}
+
+static int __vcpu_create(struct kvm *kvm, struct kvm_vcpu *vcpu, struct fpstate *fps,
+			 struct kvm_lapic *shared_apic)
+{
+	struct pkvm_vcpu *pkvm_vcpu = to_pkvm_vcpu(vcpu);
+	struct pkvm_vm *pkvm_vm = to_pkvm(kvm);
+	void *unused = (void *)pkvm_vcpu +
+		       PKVM_VCPU_BASE_SIZE +
+		       kvm_vcpu_sz;
+	int cpu = raw_smp_processor_id();
+	int ret;
+
+	pkvm_spin_lock(&pkvm_vm->lock);
+
+	ret = postponed_per_vm_setup(kvm);
+	if (ret) {
+		pkvm_spin_unlock(&pkvm_vm->lock);
+		return ret;
+	}
+
+	ret = kvm_x86_call(vcpu_precreate)(kvm);
+	if (ret) {
+		pkvm_spin_unlock(&pkvm_vm->lock);
+		return ret;
+	}
 
 	pkvm_spin_unlock(&pkvm_vm->lock);
 
@@ -526,7 +583,14 @@ static int __vcpu_create(struct kvm *kvm, struct kvm_vcpu *vcpu, struct fpstate 
 	/* Set cpu to -1 to indicate it is not loaded on any CPU */
 	vcpu->cpu = -1;
 
-	vcpu->vcpu_id = pkvm_vcpu->shared_vcpu->vcpu_id;
+	vcpu->vcpu_id = READ_ONCE(pkvm_vcpu->shared_vcpu->vcpu_id);
+	if (vcpu->vcpu_id < 0 || vcpu->vcpu_id >= kvm->arch.max_vcpu_ids)
+		return -EINVAL;
+	/*
+	 * TODO: check if there is no existing vCPU with the same vcpu_id.
+	 * See also https://lore.kernel.org/kvm/al6eg7C-2sDBEAFD@google.com/
+	 */
+
 	vcpu->arch.last_vmentry_cpu = -1;
 	vcpu->arch.regs_avail = ~0;
 	vcpu->arch.regs_dirty = ~0;
@@ -547,10 +611,10 @@ static int __vcpu_create(struct kvm *kvm, struct kvm_vcpu *vcpu, struct fpstate 
 	}
 	vcpu->arch.mcg_cap = KVM_MAX_MCE_BANKS;
 
-	if (lapic_in_kernel(pkvm_vcpu->shared_vcpu))
+	if (shared_apic)
 		vcpu->arch.apic = unused;
 
-	ret = setup_vcpu_lapic(vcpu);
+	ret = setup_vcpu_lapic(vcpu, shared_apic);
 	if (ret)
 		goto unshare_mce;
 
@@ -640,6 +704,7 @@ static void __vcpu_free(struct kvm_vcpu *vcpu)
 static int pkvm_vcpu_create(int vm_handle, phys_addr_t host_vcpu_pa,
 			    phys_addr_t pkvm_vcpu_pa, phys_addr_t fpu_pa)
 {
+	struct kvm_lapic *shared_apic;
 	struct kvm_vcpu *shared_vcpu;
 	struct pkvm_vcpu *pkvm_vcpu;
 	size_t vcpu_size, fps_size;
@@ -659,7 +724,8 @@ static int pkvm_vcpu_create(int vm_handle, phys_addr_t host_vcpu_pa,
 	vcpu_size = PKVM_VCPU_BASE_SIZE + kvm_vcpu_sz;
 	if (pkvm_is_protected_vm(&pkvm_vm->kvm))
 		vcpu_size += KVM_MCE_SIZE + KVM_MCI_CTL2_SIZE;
-	if (lapic_in_kernel(shared_vcpu)) {
+	shared_apic = kern_pkvm_va(READ_ONCE(shared_vcpu->arch.apic));
+	if (shared_apic) {
 		vcpu_size += sizeof(struct kvm_lapic);
 		if (pkvm_is_protected_vm(&pkvm_vm->kvm) && enable_apicv)
 			vcpu_size += PAGE_SIZE;
@@ -682,7 +748,7 @@ static int pkvm_vcpu_create(int vm_handle, phys_addr_t host_vcpu_pa,
 	fps = __pkvm_va(fpu_pa);
 	fps->size = fps_size;
 
-	ret = __vcpu_create(&pkvm_vm->kvm, &pkvm_vcpu->vcpu, fps);
+	ret = __vcpu_create(&pkvm_vm->kvm, &pkvm_vcpu->vcpu, fps, shared_apic);
 	if (ret)
 		goto undonate_fps;
 
@@ -777,14 +843,6 @@ static int pkvm_vcpu_load(int vm_handle, int vcpu_handle)
 		 * must be a pkvm bug.
 		 */
 		BUG_ON(pkvm_vcpu != pkvm_get_vcpu(vm_handle, vcpu_handle));
-
-		/*
-		 * Save the PKRU used by the host for the pKVM hypervisor to
-		 * switch with the guest. The XCR0 and XSS are already saved in
-		 * the kvm_host structure which are not changed at the running
-		 * time.
-		 */
-		vcpu->arch.host_pkru = read_pkru();
 
 		this_cpu_write(cur_guest_vcpu, vcpu);
 	} else if (loaded_cpu == cpu) {
@@ -1024,6 +1082,18 @@ static int pkvm_set_msr(struct kvm_vcpu *vcpu, u32 index, u64 data)
 static int pkvm_cache_reg(struct kvm_vcpu *vcpu, enum kvm_reg reg,
 			  union pkvm_hc_data *out)
 {
+	switch (reg) {
+	case VCPU_REGS_RSP:
+	case VCPU_REGS_RIP:
+	case VCPU_EXREG_PDPTR:
+	case VCPU_EXREG_CR0:
+	case VCPU_EXREG_CR3:
+	case VCPU_EXREG_CR4:
+		break;
+	default:
+		return -EOPNOTSUPP;
+	}
+
 	kvm_x86_call(cache_reg)(vcpu, reg);
 
 	switch (reg) {
@@ -1052,7 +1122,7 @@ static int pkvm_cache_reg(struct kvm_vcpu *vcpu, enum kvm_reg reg,
 		out->cache_reg.cr4 = vcpu->arch.cr4;
 		break;
 	default:
-		return -EOPNOTSUPP;
+		BUG();
 	}
 
 	return 0;
@@ -1068,6 +1138,33 @@ static void pkvm_set_dr7(struct kvm_vcpu *vcpu, unsigned long val)
 		vcpu->arch.switch_db_regs |= KVM_DEBUGREG_BP_ENABLED;
 }
 
+static int pkvm_set_segment(struct kvm_vcpu *vcpu, struct kvm_segment *var, int seg)
+{
+	if (seg < 0 || seg >= NR_VCPU_SEGMENTS)
+		return -EINVAL;
+
+	kvm_x86_call(set_segment)(vcpu, var, seg);
+	return 0;
+}
+
+static int pkvm_get_segment(struct kvm_vcpu *vcpu, struct kvm_segment *var, int seg)
+{
+	if (seg < 0 || seg >= NR_VCPU_SEGMENTS)
+		return -EINVAL;
+
+	kvm_x86_call(get_segment)(vcpu, var, seg);
+	return 0;
+}
+
+static int pkvm_get_segment_base(struct kvm_vcpu *vcpu, int seg, u64 *data)
+{
+	if (seg < 0 || seg >= NR_VCPU_SEGMENTS)
+		return -EINVAL;
+
+	*data = kvm_x86_call(get_segment_base)(vcpu, seg);
+	return 0;
+}
+
 static inline bool pkvm_event_injection_allowed(struct kvm_vcpu *vcpu)
 {
 	return !kvm_event_needs_reinjection(vcpu) &&
@@ -1075,27 +1172,14 @@ static inline bool pkvm_event_injection_allowed(struct kvm_vcpu *vcpu)
 	       !to_pkvm_vcpu(vcpu)->host_emulated_msr_err;
 }
 
-static int pkvm_interrupt_allowed(struct kvm_vcpu *vcpu, bool for_injection)
-{
-	if (for_injection && !pkvm_event_injection_allowed(vcpu))
-		return -EBUSY;
-
-	return kvm_x86_call(interrupt_allowed)(vcpu, for_injection);
-}
-
-static int pkvm_nmi_allowed(struct kvm_vcpu *vcpu, bool for_injection)
-{
-	if (for_injection && !pkvm_event_injection_allowed(vcpu))
-		return -EBUSY;
-
-	return kvm_x86_call(nmi_allowed)(vcpu, for_injection);
-}
-
 static int pkvm_inject_irq(struct kvm_vcpu *vcpu)
 {
 	struct kvm_vcpu *shared_vcpu = to_pkvm_vcpu(vcpu)->shared_vcpu;
+	bool soft = READ_ONCE(shared_vcpu->arch.interrupt.soft);
+	u8 irq = READ_ONCE(shared_vcpu->arch.interrupt.nr);
 
-	if (WARN_ON_ONCE(pkvm_interrupt_allowed(vcpu, true) <= 0))
+	if (kvm_x86_call(interrupt_allowed)(vcpu, true) <= 0 ||
+	    !pkvm_event_injection_allowed(vcpu))
 		return -EBUSY;
 
 	/*
@@ -1109,12 +1193,10 @@ static int pkvm_inject_irq(struct kvm_vcpu *vcpu)
 	 * vector number by the Intel 64 and IA-32 architectures for
 	 * architecture-defined exceptions.
 	 */
-	if (pkvm_is_protected_vcpu(vcpu) && (shared_vcpu->arch.interrupt.soft ||
-					     shared_vcpu->arch.interrupt.nr < 32))
+	if (pkvm_is_protected_vcpu(vcpu) && (soft || irq < 32))
 		return -EPERM;
 
-	vcpu->arch.interrupt.soft = shared_vcpu->arch.interrupt.soft;
-	vcpu->arch.interrupt.nr = shared_vcpu->arch.interrupt.nr;
+	kvm_queue_interrupt(vcpu, irq, soft);
 	kvm_x86_call(inject_irq)(vcpu, false);
 
 	return 0;
@@ -1122,9 +1204,11 @@ static int pkvm_inject_irq(struct kvm_vcpu *vcpu)
 
 static int pkvm_inject_nmi(struct kvm_vcpu *vcpu)
 {
-	if (WARN_ON_ONCE(pkvm_nmi_allowed(vcpu, true) <= 0))
+	if (kvm_x86_call(nmi_allowed)(vcpu, true) <= 0 ||
+	    !pkvm_event_injection_allowed(vcpu))
 		return -EBUSY;
 
+	vcpu->arch.nmi_injected = true;
 	kvm_x86_call(inject_nmi)(vcpu);
 
 	return 0;
@@ -1132,51 +1216,60 @@ static int pkvm_inject_nmi(struct kvm_vcpu *vcpu)
 
 static void pkvm_inject_exception(struct kvm_vcpu *vcpu)
 {
+	struct kvm_vcpu *shared_vcpu = to_pkvm_vcpu(vcpu)->shared_vcpu;
 	/*
 	 * As the __pkvm__inject_exception is always denied for the pVM,
 	 * it must be a code bug if the vcpu is protected.
 	 */
 	BUG_ON(pkvm_is_protected_vcpu(vcpu));
-	vcpu->arch.exception = to_pkvm_vcpu(vcpu)->shared_vcpu->arch.exception;
+
+	vcpu->arch.exception =
+		*(volatile typeof(shared_vcpu->arch.exception) *)&shared_vcpu->arch.exception;
+	vcpu->arch.exception.pending = false;
+	vcpu->arch.exception.injected = true;
 
 	kvm_x86_call(inject_exception)(vcpu);
 }
 
-static void pkvm_cancel_injection(struct kvm_vcpu *vcpu)
+static void pkvm_share_injection_with_host(struct kvm_vcpu *vcpu)
 {
-	struct pkvm_vcpu *pkvm_vcpu = to_pkvm_vcpu(vcpu);
-	struct kvm_vcpu *shared_vcpu;
+	struct kvm_vcpu *shared_vcpu = to_pkvm_vcpu(vcpu)->shared_vcpu;
 
-	kvm_x86_call(cancel_injection)(vcpu);
-
-	shared_vcpu = pkvm_vcpu->shared_vcpu;
-	if (vcpu->arch.nmi_injected) {
+	if (!pkvm_is_protected_vcpu(vcpu) && vcpu->arch.exception.injected) {
+		/*
+		 * For the pVM, the exception can only be injected by the pKVM
+		 * thus the pending exception should not be handed over to the
+		 * host.
+		 * For the npVM, the exception can be injected by both sides.
+		 */
+		shared_vcpu->arch.exception = vcpu->arch.exception;
+		kvm_clear_exception_queue(vcpu);
+	} else if (vcpu->arch.nmi_injected) {
 		shared_vcpu->arch.nmi_injected = true;
 		vcpu->arch.nmi_injected = false;
 	} else if (vcpu->arch.interrupt.injected) {
 		/*
 		 * The npVM's injected software and external interrupts can be
-		 * canceled as the host is allowed to inject both. But the host
+		 * pending as the host is allowed to inject both. But the host
 		 * is not allowed to inject the pVM's software interrupt, and
 		 * the pending pVM's software interrupt (exits during delivering
 		 * a software interrupt) should be injected by the pKVM, thus
-		 * the host cannot cancel such injection.
+		 * the pending software interrupt should not be handed over to
+		 * the host.
 		 */
 		if (!pkvm_is_protected_vcpu(vcpu) || !vcpu->arch.interrupt.soft) {
 			kvm_queue_interrupt(shared_vcpu, vcpu->arch.interrupt.nr,
 					    vcpu->arch.interrupt.soft);
 			kvm_clear_interrupt_queue(vcpu);
 		}
-	} else if (!pkvm_is_protected_vcpu(vcpu) && vcpu->arch.exception.injected) {
-		/*
-		 * For the pVM, the exception can only be injected and canceled
-		 * by the pkvm hypervisor.
-		 * For the npVM, the exception can be injected and canceled by
-		 * both sides.
-		 */
-		shared_vcpu->arch.exception = vcpu->arch.exception;
-		kvm_clear_exception_queue(vcpu);
 	}
+}
+
+static void pkvm_cancel_injection(struct kvm_vcpu *vcpu)
+{
+	kvm_x86_call(cancel_injection)(vcpu);
+
+	pkvm_share_injection_with_host(vcpu);
 }
 
 static int pkvm_refresh_apicv_exec_ctrl(struct kvm_vcpu *vcpu, bool apicv_active)
@@ -1213,22 +1306,29 @@ static int pkvm_hwapic_isr_update(struct kvm_vcpu *vcpu, int max_isr)
 	 * The value -1 represents no interrupt, thus always allow the host to
 	 * update the ISR in this case. For the other values, should do proper
 	 * checks.
-	 *
-	 * For a protected APIC, the ISR state is protected so don't allow the
-	 * host to update it. But the host will recognize the protected apic
-	 * after the vCPU starts running. Before that the host may still use
-	 * this PV interface with value -1 for the protected apic to indicate no
-	 * interrupts when reset the vCPU. So don't allow for any other max_isr
-	 * values for the protected apic.
-	 *
-	 * For pVMs which don't have protected apic, also needs to validate the
-	 * max_isr value to make sure the host cannot inject an exception vector
-	 * for the same security reason with the PV interface __pkvm__inject_irq.
-	 * See comments in the function pkvm_inject_irq.
 	 */
-	if ((max_isr != -1) && (vcpu->arch.apic->guest_apic_protected ||
-				(pkvm_is_protected_vcpu(vcpu) && max_isr < 32)))
-		return -EPERM;
+	if (max_isr != -1) {
+		/* A valid max_isr should be in [0-255]. */
+		if (max_isr & ~0xff)
+			return -EINVAL;
+
+		/*
+		 * For a protected APIC, the ISR state is protected so don't allow the
+		 * host to update it. But the host will recognize the protected apic
+		 * after the vCPU starts running. Before that the host may still use
+		 * this PV interface with value -1 for the protected apic to indicate no
+		 * interrupts when reset the vCPU. So don't allow for any other max_isr
+		 * values for the protected apic.
+		 *
+		 * For pVMs which don't have protected apic, also needs to validate the
+		 * max_isr value to make sure the host cannot inject an exception vector
+		 * for the same security reason with the PV interface __pkvm__inject_irq.
+		 * See comments in the function pkvm_inject_irq.
+		 */
+		if (vcpu->arch.apic->guest_apic_protected ||
+		    (pkvm_is_protected_vcpu(vcpu) && max_isr < 32))
+			return -EPERM;
+	}
 
 	kvm_x86_call(hwapic_isr_update)(vcpu, max_isr);
 
@@ -1243,7 +1343,10 @@ static int pkvm_vcpu_after_set_cpuid(struct kvm_vcpu *vcpu,
 	int new_nent, old_nent, ret;
 	u64 size, aligned_size;
 
-	new_nent = to_pkvm_vcpu(vcpu)->shared_vcpu->arch.cpuid_nent;
+	new_nent = READ_ONCE(to_pkvm_vcpu(vcpu)->shared_vcpu->arch.cpuid_nent);
+	if (new_nent < 0 || new_nent > KVM_MAX_CPUID_ENTRIES)
+		return -EINVAL;
+
 	size = sizeof(struct kvm_cpuid_entry2) * new_nent;
 	aligned_size = PAGE_ALIGN(size);
 	ret = pkvm_host_donate_hyp(cpuid_pa, aligned_size, false);
@@ -1307,7 +1410,7 @@ undonate:
 }
 
 static int pkvm_vcpu_add_fpstate(struct kvm_vcpu *vcpu,
-				 phys_addr_t fpstate_pa, size_t size,
+				 phys_addr_t fpstate_pa, unsigned int size,
 				 struct pkvm_memcache *mc)
 {
 	struct fpstate *new, *old;
@@ -1324,6 +1427,12 @@ static int pkvm_vcpu_add_fpstate(struct kvm_vcpu *vcpu,
 	memset(mc, 0, sizeof(*mc));
 
 	old = vcpu->arch.guest_fpu.fpstate;
+	/*
+	 * The old fpstate should always exist if the vCPU is successfully
+	 * created as it is created together with vCPU via pkvm_vcpu_create().
+	 */
+	BUG_ON(!old);
+
 	new = __pkvm_va(fpstate_pa);
 	/*
 	 * Reuse the existing fpstate memory if it's sufficiently large. At this
@@ -1334,11 +1443,12 @@ static int pkvm_vcpu_add_fpstate(struct kvm_vcpu *vcpu,
 	 * be updated. Therefore, ensuring the new fpstate size is at least as
 	 * large as the previous one allows continued support for this scenario.
 	 */
-	if (old && old->size >= size) {
+	if (size <= old->size) {
 		teardown_donated_memory(mc, new, size);
 		return 0;
 	}
 
+	BUILD_BUG_ON(!__same_type(size, new->size));
 	new->size = size;
 	vcpu->arch.guest_fpu.fpstate = new;
 
@@ -1347,10 +1457,9 @@ static int pkvm_vcpu_add_fpstate(struct kvm_vcpu *vcpu,
 
 	/*
 	 * New physical fpstate memory is consumed. Tear down the old fpstate
-	 * memory if there is.
+	 * memory.
 	 */
-	if (old)
-		teardown_donated_memory(mc, old, old->size);
+	teardown_donated_memory(mc, old, old->size);
 
 	return 0;
 }
@@ -1587,7 +1696,7 @@ static void share_vcpu_state_with_host(struct kvm_vcpu *vcpu)
 		shared_vcpu->arch.efer = vcpu->arch.efer;
 
 		/* Share the exception information to the host if there is any */
-		if (vcpu->arch.exception.pending || vcpu->arch.exception.injected) {
+		if (vcpu->arch.exception.pending) {
 			shared_vcpu->arch.exception = vcpu->arch.exception;
 			kvm_clear_exception_queue(vcpu);
 		}
@@ -1601,6 +1710,8 @@ static void share_vcpu_state_with_host(struct kvm_vcpu *vcpu)
 		shared_vcpu->arch.dr7 = vcpu->arch.dr7;
 		shared_vcpu->arch.xcr0 = vcpu->arch.xcr0;
 	}
+
+	pkvm_share_injection_with_host(vcpu);
 
 	pkvm_x86_call(share_vcpu_state_with_host)(vcpu);
 }
@@ -1629,7 +1740,8 @@ static int pkvm_vcpu_run(struct kvm_vcpu *vcpu, bool force_immediate_exit,
 	}
 
 	if (unlikely(!kvm_vcpu_has_run(vcpu)))
-		pkvm_load_mmu_pgd(vcpu);
+		kvm_x86_call(load_mmu_pgd)(vcpu, vcpu->arch.mmu->root.hpa,
+					   vcpu->arch.mmu->root_role.level);
 
 	/*
 	 * Flush predictor when switching from host VM to pVM to prevent host VM
@@ -1824,16 +1936,14 @@ static int pkvm_vcpu_handle_host_hypercall(struct kvm_vcpu *hvcpu, enum pkvm_hc 
 		kvm_vcpu_reset(vcpu, true);
 		break;
 	case __pkvm__set_segment:
-		kvm_x86_call(set_segment)(vcpu, &in->set_segment.seg_val,
-					  in->set_segment.seg);
+		ret = pkvm_set_segment(vcpu, &in->set_segment.seg_val, in->set_segment.seg);
 		break;
 	case __pkvm__get_segment:
-		kvm_x86_call(get_segment)(vcpu, &out->get_segment.seg_val,
-					  pkvm_hc_input1(hvcpu));
+		ret = pkvm_get_segment(vcpu, &out->get_segment.seg_val, pkvm_hc_input1(hvcpu));
 		break;
 	case __pkvm__get_segment_base:
-		out->get_segment_base.data =
-			kvm_x86_call(get_segment_base)(vcpu, pkvm_hc_input1(hvcpu));
+		ret = pkvm_get_segment_base(vcpu, pkvm_hc_input1(hvcpu),
+					    &out->get_segment_base.data);
 		break;
 	case __pkvm__set_idt:
 		kvm_x86_call(set_idt)(vcpu, &in->set_idt.desc);
@@ -1872,10 +1982,10 @@ static int pkvm_vcpu_handle_host_hypercall(struct kvm_vcpu *hvcpu, enum pkvm_hc 
 		kvm_x86_call(enable_irq_window)(vcpu);
 		break;
 	case __pkvm__interrupt_allowed:
-		ret = pkvm_interrupt_allowed(vcpu, pkvm_hc_input1(hvcpu));
+		ret = kvm_x86_call(interrupt_allowed)(vcpu, pkvm_hc_input1(hvcpu));
 		break;
 	case __pkvm__nmi_allowed:
-		ret = pkvm_nmi_allowed(vcpu, pkvm_hc_input1(hvcpu));
+		ret = kvm_x86_call(nmi_allowed)(vcpu, pkvm_hc_input1(hvcpu));
 		break;
 	case __pkvm__get_nmi_mask:
 		out->get_nmi_mask.data = kvm_x86_call(get_nmi_mask)(vcpu);
@@ -1983,9 +2093,6 @@ void pkvm_handle_host_hypercall(struct kvm_vcpu *vcpu)
 	case __pkvm__check_processor_compatibility:
 		ret = kvm_x86_call(check_processor_compatibility)();
 		break;
-	case __pkvm__enable_virtualization_cpu:
-		ret = pkvm_enable_virtualization_cpu();
-		break;
 	case __pkvm__vm_init:
 		ret = pkvm_vm_init(pkvm_host_gpa_to_phys(pkvm_hc_input1(vcpu)),
 				   pkvm_host_gpa_to_phys(pkvm_hc_input2(vcpu)),
@@ -1995,7 +2102,7 @@ void pkvm_handle_host_hypercall(struct kvm_vcpu *vcpu)
 		ret = pkvm_vm_finalize(pkvm_hc_input1(vcpu));
 		break;
 	case __pkvm__vm_destroy:
-		pkvm_vm_destroy(pkvm_hc_input1(vcpu), &out.vm_destroy.memcache);
+		ret = pkvm_vm_destroy(pkvm_hc_input1(vcpu), &out.vm_destroy.memcache);
 		break;
 	case __pkvm__vcpu_create:
 		ret = pkvm_vcpu_create(pkvm_hc_input1(vcpu),
@@ -2043,6 +2150,13 @@ void pkvm_handle_host_hypercall(struct kvm_vcpu *vcpu)
 					    pkvm_hc_input2(vcpu),
 					    pkvm_hc_input3(vcpu));
 		break;
+	case __pkvm__iommu_msi_write:
+		ret = pkvm_iommu_msi_write(pkvm_hc_input1(vcpu),
+					   pkvm_hc_input2(vcpu),
+					   pkvm_hc_input3(vcpu),
+					   pkvm_hc_input4(vcpu),
+					   pkvm_hc_input5(vcpu));
+		break;
 	case __pkvm__iommu_iec_flush:
 		ret = pkvm_iommu_iec_flush(pkvm_hc_input1(vcpu),
 					   pkvm_hc_input2(vcpu),
@@ -2087,6 +2201,9 @@ void pkvm_handle_host_hypercall(struct kvm_vcpu *vcpu)
 					      pkvm_hc_input2(vcpu),
 					      pkvm_hc_input3(vcpu));
 		break;
+	case __pkvm__iommu_modify_irte:
+		ret = pkvm_iommu_modify_irte(&in.iommu_modify_irte.data);
+		break;
 #endif
 	default:
 		ret = pkvm_vcpu_handle_host_hypercall(vcpu, hc, &in, &out);
@@ -2107,9 +2224,62 @@ void pkvm_kick_vcpu(struct kvm_vcpu *vcpu)
 	pkvm_lapic_send_init(READ_ONCE(vcpu->cpu));
 }
 
+void pkvm_wait_vcpu_kicked_out(struct kvm_vcpu *vcpu)
+{
+	int relax_iters = 0;
+	u64 start;
+
+	if (READ_ONCE(vcpu->mode) != EXITING_GUEST_MODE)
+		return;
+
+	start = rdtsc();
+	do {
+		cpu_relax();
+		if (++relax_iters == 1000) {
+			/*
+			 * Bug the system if waiting for the remote CPU to ack
+			 * the kick is taking longer than 1s. It may take
+			 * microseconds, sometimes up to milliseconds (if the
+			 * CPU needs to wake from a deeper low-power state) but
+			 * should not take as long as a second.
+			 */
+			BUG_ON(((rdtsc() - start) / tsc_khz) > 1000);
+			relax_iters = 0;
+		}
+	} while (READ_ONCE(vcpu->mode) == EXITING_GUEST_MODE);
+}
+
+void pkvm_handle_init_signal(void)
+{
+	if (unlikely(atomic_read(&pkvm_panic_in_progress))) {
+		while (1)
+			asm volatile("cli; hlt");
+	}
+}
+
+void pkvm_udelay(unsigned int usecs)
+{
+	u64 start = rdtsc_ordered();
+	u64 delta = (u64)usecs * tsc_khz / 1000;
+
+	while (rdtsc_ordered() - start < delta)
+		cpu_relax();
+}
+
 int pkvm_x86_vendor_init(struct kvm_x86_init_ops *ops)
 {
 	int r;
+
+	if (boot_cpu_has(X86_FEATURE_SHSTK) || boot_cpu_has(X86_FEATURE_IBT)) {
+		rdmsrq(MSR_IA32_S_CET, kvm_host.s_cet);
+		/*
+		 * Linux doesn't yet support supervisor shadow stacks (SSS), so
+		 * (p)KVM doesn't save/restore the associated MSRs. See
+		 * corresponding comment in kvm_x86_vendor_init().
+		 */
+		if (WARN_ON_ONCE(kvm_host.s_cet & CET_SHSTK_EN))
+			return -EIO;
+	}
 
 	memset(&kvm_caps, 0, sizeof(kvm_caps));
 
@@ -2195,10 +2365,11 @@ struct pkvm_vcpu *pkvm_get_vcpu(int vm_handle, int vcpu_handle)
 void pkvm_put_vcpu(struct pkvm_vcpu *pkvm_vcpu)
 {
 	int vcpu_handle = pkvm_vcpu->vcpu.arch.pkvm.handle;
+	struct pkvm_vm *pkvm_vm = pkvm_vcpu->pkvm_vm;
 
-	WARN_ON(atomic_dec_if_positive(&pkvm_vcpu->pkvm_vm->vcpu_refs[vcpu_handle]) <= 0);
+	WARN_ON(atomic_dec_if_positive(&pkvm_vm->vcpu_refs[vcpu_handle]) <= 0);
 
-	pkvm_put_vm(pkvm_vcpu->pkvm_vm);
+	pkvm_put_vm(pkvm_vm);
 }
 
 unsigned long pkvm_pcpu_tss(int cpu)
@@ -2215,6 +2386,7 @@ unsigned long pkvm_pcpu_tss(int cpu)
 int pkvm_start_secondary_vcpu(struct kvm *kvm, u32 apic_id, unsigned long start_ip)
 {
 	struct pkvm_vm *pkvm_vm = to_pkvm(kvm);
+	struct kvm_vcpu *vcpu;
 	int ret = -EINVAL;
 	int i;
 
@@ -2226,9 +2398,7 @@ int pkvm_start_secondary_vcpu(struct kvm *kvm, u32 apic_id, unsigned long start_
 
 	pkvm_spin_lock(&pkvm_vm->lock);
 
-	for (i = 0; i < kvm->created_vcpus; i++) {
-		struct kvm_vcpu *vcpu = &pkvm_vm->vcpus[i]->vcpu;
-
+	for_each_pkvm_guest_vcpu(i, vcpu, pkvm_vm) {
 		if (vcpu->vcpu_id != apic_id)
 			continue;
 
@@ -2286,6 +2456,66 @@ int pkvm_walk_each_vm(pkvm_vm_func_t func, void *arg)
 	}
 
 	pkvm_spin_unlock(&pkvm_vms_lock);
+
+	return ret;
+}
+
+static void *admit_host_page(void *arg)
+{
+	struct pkvm_memcache *host_mc = arg;
+	bool share_ro = host_mc->flags & PKVM_MC_DONATE_SHARE_RO;
+	phys_addr_t addr;
+	void *page;
+	int ret;
+
+	if (!host_mc->count || WARN_ON_ONCE(host_mc->head.nr_pages != 1))
+		return NULL;
+
+	/*
+	 * Should donate the page from the host memcache before pop it out
+	 * because pop will read data from this page to get the next head, and
+	 * then will write this data to the host memcache's head. Without
+	 * donating, doing that may leak sensitive data as this page may be a
+	 * private page of a pVM or the hypervisor.
+	 *
+	 * The page is donated uncleared. Consumers of the refilled memcache
+	 * are responsible for zeroing the page before use.
+	 */
+	addr = pkvm_host_gpa_to_phys(host_mc->head.addr);
+	ret = share_ro ? pkvm_host_donate_hyp_share_ro(addr, PAGE_SIZE, false) :
+			 pkvm_host_donate_hyp(addr, PAGE_SIZE, false);
+	if (WARN_ON_ONCE(ret))
+		return NULL;
+
+	page = pop_pkvm_memcache_page(host_mc, pkvm_host_gpa_to_virt);
+	/*
+	 * The head page is already donated so the pop has no reason to fail
+	 * unless there is a code bug.
+	 */
+	BUG_ON(!page);
+
+	return page;
+}
+
+/* Refill our local memcache by popping pages from the one provided by the host. */
+int pkvm_refill_memcache(struct pkvm_memcache *mc, unsigned long min_pages,
+			 struct pkvm_memcache *host_mc)
+{
+	/*
+	 * The host mc is shared and can be modified by the host while popping.
+	 * Copy it to local and use the local one to prevent the host from
+	 * changing it with unexpected values, e.g., the host change the
+	 * host_mc->head.addr to a private page address after addr is donated
+	 * but before popping up, making the pop_pkvm_memcache_page reading
+	 * from the private page and leaking data to the host.
+	 */
+	struct pkvm_memcache tmp_mc = *(volatile typeof(*host_mc) *)host_mc;
+	int ret;
+
+	ret = topup_pkvm_memcache(mc, min_pages, admit_host_page,
+				  pkvm_virt_to_phys, &tmp_mc);
+
+	*(volatile typeof(*host_mc) *)host_mc = tmp_mc;
 
 	return ret;
 }

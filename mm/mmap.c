@@ -343,7 +343,6 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 			unsigned long pgoff, unsigned long *populate,
 			struct list_head *uf)
 {
-	unsigned long file_backed_len = 0;
 	struct mm_struct *mm = current->mm;
 	int pkey = 0;
 
@@ -372,7 +371,7 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 		addr = round_hint_to_min(addr);
 
 	/* Careful about overflows.. */
-	len = __COMPAT_PAGE_ALIGN(len, flags);
+	len = __PAGE_ALIGN(len);
 	if (!len)
 		return -ENOMEM;
 
@@ -434,8 +433,6 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 
 		if (!file_mmap_ok(file, inode, pgoff, len))
 			return -EOVERFLOW;
-
-		file_backed_len = __filemap_len(inode, pgoff, len, flags);
 
 		flags_mask = LEGACY_MAP_MASK;
 		if (file->f_op->fop_flags & FOP_MMAP_SYNC)
@@ -512,7 +509,7 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 			break;
 		case MAP_DROPPABLE:
 			if (VM_DROPPABLE == VM_NONE)
-				return -ENOTSUPP;
+				return -EOPNOTSUPP;
 			/*
 			 * A locked or stack area makes no sense to be droppable.
 			 *
@@ -565,14 +562,13 @@ unsigned long do_mmap(struct file *file, unsigned long addr,
 			vm_flags |= VM_NORESERVE;
 	}
 
+	pgoff = __bpf_pgoff_fixup(file, pgoff);
+
 	addr = mmap_region(file, addr, len, vm_flags, pgoff, uf);
 	if (!IS_ERR_VALUE(addr) &&
 	    ((vm_flags & VM_LOCKED) ||
 	     (flags & (MAP_POPULATE | MAP_NONBLOCK)) == MAP_POPULATE))
 		*populate = len;
-
-	__filemap_fixup(addr, prot, file_backed_len, len);
-
 	return addr;
 }
 
@@ -1142,7 +1138,7 @@ SYSCALL_DEFINE5(remap_file_pages, unsigned long, start, unsigned long, size,
 	 */
 	vma = vma_lookup(mm, start);
 
-	if (!vma || !(vma->vm_flags & VM_SHARED)) {
+	if (!vma || !(vma->vm_flags & VM_SHARED) || vma->vm_flags & VM_NO_REMAP_FILE_PAGES) {
 		mmap_read_unlock(mm);
 		return -EINVAL;
 	}
@@ -1297,9 +1293,11 @@ void exit_mmap(struct mm_struct *mm)
 
 	flush_cache_mm(mm);
 	tlb_gather_mmu_fullmm(&tlb, mm);
+	trace_android_vh_swapmem_gather_init(mm);
 	/* update_hiwater_rss(mm) here? but nobody should be looking */
 	/* Use ULONG_MAX here to ensure all VMAs in the mm are unmapped */
 	unmap_vmas(&tlb, &vmi.mas, vma, 0, ULONG_MAX, ULONG_MAX, false);
+	trace_android_vh_swapmem_gather_finish(mm);
 	mmap_read_unlock(mm);
 
 	/*

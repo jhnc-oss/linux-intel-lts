@@ -30,6 +30,7 @@ struct qi_desc;
 struct intel_iommu;
 struct dmar_domain;
 struct device_domain_info;
+struct irte;
 
 #ifdef CONFIG_PKVM_INTEL
 extern u16 pkvm_sym(satc_devs)[];
@@ -120,9 +121,9 @@ int pkvm_context_mapping(struct intel_iommu *iommu, struct device_domain_info *i
 int pkvm_pasid_table_setup(struct intel_iommu *iommu, struct device_domain_info *info,
 			   u8 bus, u8 devfn);
 int pkvm_pasid_setup_fl(struct device_domain_info *info, phys_addr_t fsptptr,
-			u32 pasid, u16 did, u16 old_did, int flags);
+			u32 pasid, u16 did, int flags);
 int pkvm_pasid_setup_sl(struct device_domain_info *info, phys_addr_t ssptptr,
-			u32 pasid, u16 did, u16 old_did);
+			u32 pasid, u16 did);
 int pkvm_pasid_teardown(struct device_domain_info *info, u32 pasid);
 int pkvm_alloc_domain(struct device_domain_info *info, struct dmar_domain *domain);
 int pkvm_free_domain(struct dmar_domain *domain);
@@ -131,6 +132,10 @@ int pkvm_domain_map(struct dmar_domain *domain, unsigned long iov_pfn,
 		    int prot, int gfp);
 int pkvm_domain_unmap(struct dmar_domain *domain, unsigned long start_pfn,
 		      unsigned long last_pfn);
+int pkvm_modify_irte(struct intel_iommu *iommu, int index, struct irte *irte_modified);
+int pkvm_write_iommu_msi(struct intel_iommu *iommu, u32 offset, u32 data,
+			 u32 addr, u32 uaddr);
+
 #else /* __PKVM_HYP__ */
 /*
  * dev_iommu_priv_get is called from quite a few places in code re-used by
@@ -166,38 +171,30 @@ static inline bool iommu_supports_5levels(void)
 }
 
 struct intel_iommu *iommu_from_phys(unsigned long phys);
-static inline bool is_iommu_mmio(unsigned long phys)
-{
-	return !!iommu_from_phys(phys);
-}
 
 extern struct dmar_domain pt_domain;
 void init_pt_domain(void);
 
-bool overlaps_iommu_mmio(unsigned long phys, unsigned long size);
 bool is_dev_in_satc(u16 bdf);
 bool pkvm_iommu_paging_structure_coherency(void);
 
 struct dmar_domain *pkvm_alloc_iommu_domain(struct alloc_domain_data *data,
 					    bool need_iotlb_sync_map);
-struct dmar_domain *pkvm_get_iommu_domain(void *pgd);
-struct dmar_domain *pkvm_get_iommu_domain_noref(void *pgd);
+struct dmar_domain *pkvm_get_iommu_domain(void *pgd, u16 did,
+					  struct intel_iommu *iommu);
+struct dmar_domain *pkvm_get_iommu_domain_noref(void *pgd, u16 did);
 void pkvm_put_iommu_domain(struct dmar_domain *domain);
-int pkvm_free_iommu_domain(struct dmar_domain *domain, struct pkvm_memcache *teardown_mc);
+int pkvm_free_iommu_domain(u64 pgd_gpa, struct pkvm_memcache *teardown_mc);
 
 struct cache_tag *pkvm_alloc_cache_tag(void);
 void pkvm_free_cache_tag(struct cache_tag *cache_tag);
 void pkvm_iommu_pt_flush(unsigned long paddr, unsigned long size);
 
-int pkvm_get_domain_cache_tag_assign(void *pgd, int did, u32 pasid,
-				     struct device_domain_info *info);
-void pkvm_put_domain_cache_tag_unassign(void *pgd, int did, u32 pasid,
-					struct device_domain_info *info);
-
 int pkvm_intel_iommu_init(void);
 
 int pkvm_iommu_mmio_read(u64 phys, int len, u64 *val);
 int pkvm_iommu_mmio_write(u64 phys, int len, u64 val);
+int pkvm_iommu_msi_write(u64 phys, u32 offset, u32 data, u32 addr, u32 uaddr);
 int pkvm_iommu_iec_flush(u64 phys, int index, int mask, bool global);
 int pkvm_iommu_clear_ce(struct clear_ce_data *data);
 int pkvm_iommu_set_lm_ce(struct set_lm_ce_data *in, struct set_lm_ce_data *out);
@@ -209,6 +206,26 @@ int pkvm_iommu_alloc_domain(struct alloc_domain_data *data);
 int pkvm_iommu_free_domain(u64 pgd_gpa, struct pkvm_memcache *mc);
 int pkvm_iommu_domain_map(struct domain_map_data *in, struct domain_map_data *out);
 int pkvm_iommu_domain_unmap(u64 pgd_gpa, u64 start_pfn, u64 last_pfn);
+int pkvm_iommu_modify_irte(struct modify_irte_data *data);
+
+/*
+ * Return value from a pKVM MMIO register validator meaning "this offset is not
+ * one of my registers" -- the dispatcher should try the next handler or fall to
+ * deny-by-default. Distinct from the validators' rejection codes (-EINVAL etc).
+ */
+#define IOMMU_REG_NOT_HANDLED	(-ENXIO)
+
+void pkvm_iommu_pmu_init(struct intel_iommu *iommu);
+
+int pkvm_iommu_pmu_validate_read(struct intel_iommu *iommu,
+				 unsigned long offset, int len);
+int pkvm_iommu_pmu_validate_write(struct intel_iommu *iommu,
+				  unsigned long offset, int len, u64 val);
+
+int pkvm_iommu_frcd_validate_read(struct intel_iommu *iommu,
+				  unsigned long offset, int len);
+int pkvm_iommu_frcd_validate_write(struct intel_iommu *iommu,
+				   unsigned long offset, int len, u64 val);
 #endif /* !__PKVM_HYP__ */
 #else /* !CONFIG_PKVM_INTEL */
 static inline int pkvm_iec_flush(struct intel_iommu *iommu, bool global,
@@ -235,13 +252,13 @@ static inline int pkvm_pasid_table_setup(struct intel_iommu *iommu,
 }
 static inline int pkvm_pasid_setup_fl(struct device_domain_info *info,
 				      phys_addr_t fsptptr, u32 pasid,
-				      u16 did, u16 old_did, int flags)
+				      u16 did, int flags)
 {
 	return -EOPNOTSUPP;
 }
 static inline int pkvm_pasid_setup_sl(struct device_domain_info *info,
 				      phys_addr_t ssptptr, u32 pasid,
-				      u16 did, u16 old_did)
+				      u16 did)
 {
 	return -EOPNOTSUPP;
 }
@@ -266,6 +283,16 @@ static inline int pkvm_domain_map(struct dmar_domain *domain, unsigned long iov_
 }
 static inline int pkvm_domain_unmap(struct dmar_domain *domain, unsigned long start_pfn,
 				    unsigned long last_pfn)
+{
+	return -EOPNOTSUPP;
+}
+static inline int pkvm_modify_irte(struct intel_iommu *iommu, int index,
+				   struct irte *irte_modified)
+{
+	return -EOPNOTSUPP;
+}
+static inline int pkvm_write_iommu_msi(struct intel_iommu *iommu, u32 offset, u32 data,
+				       u32 addr, u32 uaddr)
 {
 	return -EOPNOTSUPP;
 }

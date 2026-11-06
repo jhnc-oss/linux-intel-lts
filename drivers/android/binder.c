@@ -721,7 +721,12 @@ static void binder_do_set_priority(struct binder_thread *thread,
 	struct task_struct *task = thread->task;
 	int priority; /* user-space prio value */
 	bool has_cap_nice;
+	bool skip = false;
 	unsigned int policy = desired->sched_policy;
+
+	trace_android_vh_binder_skip_set_priority(thread, &skip);
+	if (skip)
+		return;
 
 	if (task->policy == policy && task->prio == desired->prio) {
 		spin_lock(&thread->prio_lock);
@@ -822,6 +827,8 @@ static void binder_transaction_priority(struct binder_thread *thread,
 		.sched_policy = node->sched_policy,
 		.prio = node->min_priority,
 	};
+
+	trace_android_vh_binder_transaction_priority(thread, t);
 
 	if (t->set_priority_called)
 		return;
@@ -1839,7 +1846,20 @@ static void binder_txn_latency_free(struct binder_transaction *t)
 
 static void binder_free_transaction(struct binder_transaction *t)
 {
-	struct binder_proc *target_proc = t->to_proc;
+	struct binder_thread *target_thread;
+	struct binder_proc *target_proc;
+
+	spin_lock(&t->lock);
+	target_proc = t->to_proc;
+	target_thread = t->to_thread;
+	/*
+	 * Pin target_thread to keep target_proc alive. Undelivered
+	 * transactions with !target_thread are safe, as target_proc
+	 * can only be the current context there.
+	 */
+	if (target_thread)
+		atomic_inc(&target_thread->tmp_ref);
+	spin_unlock(&t->lock);
 
 	trace_android_vh_free_oem_binder_struct(t);
 	if (target_proc) {
@@ -1854,6 +1874,10 @@ static void binder_free_transaction(struct binder_transaction *t)
 			t->buffer->transaction = NULL;
 		binder_inner_proc_unlock(target_proc);
 	}
+
+	if (target_thread)
+		binder_thread_dec_tmpref(target_thread);
+
 	if (trace_binder_txn_latency_free_enabled())
 		binder_txn_latency_free(t);
 	/*
@@ -3311,11 +3335,12 @@ static void binder_transaction(struct binder_proc *proc,
 	INIT_LIST_HEAD(&t->fd_fixups);
 	binder_stats_created(BINDER_STAT_TRANSACTION);
 	spin_lock_init(&t->lock);
+	trace_android_vh_binder_transaction_init(t);
 	t->debug_id = t_debug_id;
 	t->start_time = t_start_time;
 	t->from_pid = proc->pid;
 	t->from_tid = thread->pid;
-	t->sender_euid = task_euid(proc->tsk);
+	t->sender_euid = current_euid();
 	t->code = tr->code;
 	t->flags = tr->flags;
 	t->work.type = BINDER_WORK_TRANSACTION;
@@ -4993,6 +5018,7 @@ retry:
 			wait_event_interruptible(binder_user_error_wait,
 						 binder_stop_on_user_error < 2);
 		}
+		trace_android_vh_binder_before_restore_priority(NULL);
 		binder_restore_priority(thread, &proc->default_priority);
 	}
 

@@ -1529,6 +1529,7 @@ drm_atomic_add_affected_planes(struct drm_atomic_state *state,
 	const struct drm_crtc_state *old_crtc_state =
 		drm_atomic_get_old_crtc_state(state, crtc);
 	struct drm_plane *plane;
+	int ret;
 
 	WARN_ON(!drm_atomic_get_new_crtc_state(state, crtc));
 
@@ -1542,6 +1543,12 @@ drm_atomic_add_affected_planes(struct drm_atomic_state *state,
 
 		if (IS_ERR(plane_state))
 			return PTR_ERR(plane_state);
+
+		if (plane_state->color_pipeline) {
+			ret = drm_atomic_add_affected_colorops(state, plane);
+			if (ret)
+				return ret;
+		}
 	}
 	return 0;
 }
@@ -1718,9 +1725,8 @@ EXPORT_SYMBOL(drm_atomic_check_only);
 int drm_atomic_commit(struct drm_atomic_state *state)
 {
 	struct drm_mode_config *config = &state->dev->mode_config;
-	struct drm_printer p = drm_info_printer(state->dev->dev);
+	struct drm_printer p = drm_debug_category_printer(DRM_UT_STATE, "commit_state");
 	int ret;
-
 	if (drm_debug_enabled(DRM_UT_STATE))
 		drm_atomic_print_new_state(state, &p);
 

@@ -312,7 +312,9 @@ struct header_ops {
 	int	(*create) (struct sk_buff *skb, struct net_device *dev,
 			   unsigned short type, const void *daddr,
 			   const void *saddr, unsigned int len);
-	int	(*parse)(const struct sk_buff *skb, unsigned char *haddr);
+	int	(*parse)(const struct sk_buff *skb,
+			 const struct net_device *dev,
+			 unsigned char *haddr);
 	int	(*cache)(const struct neighbour *neigh, struct hh_cache *hh, __be16 type);
 	void	(*cache_update)(struct hh_cache *hh,
 				const struct net_device *dev,
@@ -989,6 +991,7 @@ enum bpf_netdev_command {
 	XDP_SETUP_XSK_POOL,
 };
 
+struct apf_ops;
 struct bpf_prog_offload_ops;
 struct netlink_ext_ack;
 struct xdp_umem;
@@ -1689,7 +1692,13 @@ struct net_device_ops {
 	const struct net_shaper_ops *net_shaper_ops;
 #endif
 
-	ANDROID_KABI_RESERVE(1);
+#if IS_ENABLED(CONFIG_NET_APF)
+	/**
+	 * @apf_ops: Advanced Packet Filter operations
+	 * see include/net/apf.h
+	 */
+	ANDROID_KABI_USE(1, const struct apf_ops *apf_ops);
+#endif
 	ANDROID_KABI_RESERVE(2);
 	ANDROID_KABI_RESERVE(3);
 	ANDROID_KABI_RESERVE(4);
@@ -1853,6 +1862,8 @@ enum netdev_reg_state {
  *
  *	@mpls_features:	Mask of features inheritable by MPLS
  *	@gso_partial_features: value(s) from NETIF_F_GSO\*
+ *	@mangleid_features:	Mask of features requiring MANGLEID, will be
+ *				disabled together with the latter.
  *
  *	@ifindex:	interface index
  *	@group:		The group the device belongs to
@@ -2241,6 +2252,7 @@ struct net_device {
 	netdev_features_t	vlan_features;
 	netdev_features_t	hw_enc_features;
 	netdev_features_t	mpls_features;
+	netdev_features_t	mangleid_features;
 
 	unsigned int		min_mtu;
 	unsigned int		max_mtu;
@@ -3478,7 +3490,7 @@ static inline int dev_parse_header(const struct sk_buff *skb,
 
 	if (!dev->header_ops || !dev->header_ops->parse)
 		return 0;
-	return dev->header_ops->parse(skb, haddr);
+	return dev->header_ops->parse(skb, dev, haddr);
 }
 
 static inline __be16 dev_parse_header_protocol(const struct sk_buff *skb)

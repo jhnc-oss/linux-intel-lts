@@ -188,22 +188,6 @@
  * 			the fast path and disables lockless freelists.
  */
 
-/**
- * enum slab_flags - How the slab flags bits are used.
- * @SL_locked: Is locked with slab_lock()
- * @SL_partial: On the per-node partial list
- * @SL_pfmemalloc: Was allocated from PF_MEMALLOC reserves
- *
- * The slab flags share space with the page flags but some bits have
- * different interpretations.  The high bits are used for information
- * like zone/node/section.
- */
-enum slab_flags {
-	SL_locked = PG_locked,
-	SL_partial = PG_workingset,	/* Historical reasons for this bit */
-	SL_pfmemalloc = PG_active,	/* Historical reasons for this bit */
-};
-
 /*
  * We could simply use migrate_disable()/enable() but as long as it's a
  * function call even on !PREEMPT_RT, use inline preempt_disable() there.
@@ -721,11 +705,6 @@ static inline void slab_set_pfmemalloc(struct slab *slab)
 	set_bit(SL_pfmemalloc, &slab->flags.f);
 }
 
-static inline void __slab_clear_pfmemalloc(struct slab *slab)
-{
-	__clear_bit(SL_pfmemalloc, &slab->flags.f);
-}
-
 /*
  * Per slab locking using the pagelock
  */
@@ -1049,7 +1028,9 @@ unsigned long get_each_kmemcache_object(struct kmem_cache *s,
 		spin_lock_irqsave(&n->list_lock, flags);
 		list_for_each_entry(slab, &n->partial, slab_list) {
 			for_each_object(p, s, slab_address(slab), slab->objects) {
+				metadata_access_enable();
 				ret = fn(s, p, private);
+				metadata_access_disable();
 				if (ret) {
 					spin_unlock_irqrestore(&n->list_lock, flags);
 					return ret;
@@ -1059,7 +1040,9 @@ unsigned long get_each_kmemcache_object(struct kmem_cache *s,
 #ifdef CONFIG_SLUB_DEBUG
 		list_for_each_entry(slab, &n->full, slab_list) {
 			for_each_object(p, s, slab_address(slab), slab->objects) {
+				metadata_access_enable();
 				ret = fn(s, p, private);
+				metadata_access_disable();
 				if (ret) {
 					spin_unlock_irqrestore(&n->list_lock, flags);
 					return ret;
@@ -4238,6 +4221,7 @@ void flush_rcu_sheaves_on_cache(struct kmem_cache *s)
 	struct slub_flush_work *sfw;
 	unsigned int cpu;
 
+	lockdep_assert_cpus_held();
 	mutex_lock(&flush_lock);
 
 	for_each_online_cpu(cpu) {
@@ -5038,15 +5022,17 @@ bool slab_post_alloc_hook(struct kmem_cache *s, struct list_lru *lru,
 	gfp_t init_flags = flags & gfp_allowed_mask;
 
 	/*
-	 * For kmalloc object, the allocated memory size(object_size) is likely
-	 * larger than the requested size(orig_size). If redzone check is
-	 * enabled for the extra space, don't zero it, as it will be redzoned
-	 * soon. The redzone operation for this extra space could be seen as a
-	 * replacement of current poisoning under certain debug option, and
-	 * won't break other sanity checks.
+	 * For kmalloc object, the allocated size (object_size) can be larger
+	 * than the requested size (orig_size). We however need to zero the
+	 * whole object_size to handle possible later krealloc() with
+	 *__GFP_ZERO properly.
+	 *
+	 * But if we keep track of the requested size, krealloc() uses that
+	 * information. Additionally if red zoning is enabled, the extra space
+	 * is also red zone, so we should not overwrite it. So limit zeroing to
+	 * orig_size if we track it.
 	 */
-	if (kmem_cache_debug_flags(s, SLAB_STORE_USER | SLAB_RED_ZONE) &&
-	    (s->flags & SLAB_KMALLOC))
+	if (slub_debug_orig_size(s))
 		zero_size = orig_size;
 
 	/*
@@ -5687,6 +5673,7 @@ static void *___kmalloc_large_node(size_t size, gfp_t flags, int node)
 	else
 		folio = (struct folio *)__alloc_frozen_pages_noprof(flags, order, node, NULL);
 
+	trace_android_rvh_kmalloc_large_fallback_cma(&folio, order, flags);
 	if (folio) {
 		ptr = folio_address(folio);
 		lruvec_stat_mod_folio(folio, NR_SLAB_UNRECLAIMABLE_B,
@@ -5791,6 +5778,11 @@ void *kmalloc_nolock_noprof(size_t size, gfp_t gfp_flags, int node)
 		 * sleeping lock on RT.
 		 */
 		return NULL;
+
+	/* On UP, spin_trylock() always succeeds even when it is locked */
+	if (!IS_ENABLED(CONFIG_SMP) && in_nmi())
+		return NULL;
+
 retry:
 	if (unlikely(size > KMALLOC_MAX_CACHE_SIZE))
 		return NULL;
@@ -6872,6 +6864,7 @@ EXPORT_SYMBOL(kmem_cache_free);
 static void free_large_kmalloc(struct folio *folio, void *object)
 {
 	unsigned int order = folio_order(folio);
+	bool bypass = false;
 
 	if (WARN_ON_ONCE(!folio_test_large_kmalloc(folio))) {
 		dump_page(&folio->page, "Not a kmalloc allocation");
@@ -6888,6 +6881,10 @@ static void free_large_kmalloc(struct folio *folio, void *object)
 	lruvec_stat_mod_folio(folio, NR_SLAB_UNRECLAIMABLE_B,
 			      -(PAGE_SIZE << order));
 	__folio_clear_large_kmalloc(folio);
+
+	trace_android_vh_free_large_kmalloc_bypass(folio, &bypass);
+	if (bypass)
+		return;
 	free_frozen_pages(&folio->page, order);
 }
 
@@ -7042,16 +7039,6 @@ __do_krealloc(const void *p, size_t new_size, unsigned long align, gfp_t flags, 
 	if (!kasan_check_byte(p))
 		return NULL;
 
-	/*
-	 * If reallocation is not necessary (e. g. the new size is less
-	 * than the current allocated size), the current allocation will be
-	 * preserved unless __GFP_THISNODE is set. In the latter case a new
-	 * allocation on the requested node will be attempted.
-	 */
-	if (unlikely(flags & __GFP_THISNODE) && nid != NUMA_NO_NODE &&
-		     nid != page_to_nid(virt_to_page(p)))
-		goto alloc_new;
-
 	if (is_kfence_address(p)) {
 		ks = orig_size = kfence_ksize(p);
 	} else {
@@ -7069,6 +7056,16 @@ __do_krealloc(const void *p, size_t new_size, unsigned long align, gfp_t flags, 
 			ks = s->object_size;
 		}
 	}
+
+	/*
+	 * If reallocation is not necessary (e. g. the new size is less
+	 * than the current allocated size), the current allocation will be
+	 * preserved unless __GFP_THISNODE is set. In the latter case a new
+	 * allocation on the requested node will be attempted.
+	 */
+	if (unlikely(flags & __GFP_THISNODE) && nid != NUMA_NO_NODE &&
+		     nid != page_to_nid(virt_to_page(p)))
+		goto alloc_new;
 
 	/* If the old object doesn't fit, allocate a bigger one */
 	if (new_size > ks)
@@ -7104,7 +7101,7 @@ alloc_new:
 	if (ret && p) {
 		/* Disable KASAN checks as the object's redzone is accessed. */
 		kasan_disable_current();
-		memcpy(ret, kasan_reset_tag(p), orig_size ?: ks);
+		memcpy(ret, kasan_reset_tag(p), min(new_size, (size_t)(orig_size ?: ks)));
 		kasan_enable_current();
 	}
 
@@ -7339,7 +7336,7 @@ void *kvrealloc_node_align_noprof(const void *p, size_t size, unsigned long alig
 		if (p) {
 			/* We already know that `p` is not a vmalloc address. */
 			kasan_disable_current();
-			memcpy(n, kasan_reset_tag(p), ksize(p));
+			memcpy(n, kasan_reset_tag(p), min(size, ksize(p)));
 			kasan_enable_current();
 
 			kfree(p);

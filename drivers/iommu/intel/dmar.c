@@ -1380,6 +1380,18 @@ static int qi_check_fault(struct intel_iommu *iommu, int index, int wait_index)
 		 *
 		 * 0 value of ite_sid means old VT-d device, no ite_sid value.
 		 * see Intel VT-d spec r4.1, section 11.4.9.9
+		 *
+		 * NOTE: with pKVM, ATS is only enabled for devices listed in
+		 * SATC (see is_dev_in_satc() gating in iommu_set_lm_ce()/
+		 * iommu_set_sm_ce()), and SATC devices are SoC-integrated and
+		 * not hot-removable, so the device-released/not-present
+		 * scenario handled here cannot occur as a result of device
+		 * unplug by the user. It may still occur if the device is
+		 * malfunctioning or if an abrupt device removal is triggered
+		 * by host kernel or (importantly!) by privileged host userspace
+		 * via sysfs. Thus it may still cause a hard lockup of the
+		 * system due to an infinite ATS invalidate retry loop in these
+		 * cases.
 		 */
 		if (ite_sid) {
 			dev = device_rbtree_find(iommu, ite_sid);
@@ -1652,8 +1664,12 @@ void qi_flush_dev_iotlb(struct intel_iommu *iommu, u16 sid, u16 pfsid,
 	if (!(iommu->gcmd & DMA_GCMD_TE))
 		return;
 #else
-	if (!(iommu->vgsts & DMA_GSTS_TES))
-		return;
+	/*
+	 * Translation is never disabled after enabling during initialization.
+	 * And this is not called before IOMMU is initialized in pKVM.
+	 * If this is called with translation disabled, it means a bug in pKVM!
+	 */
+	BUG_ON(!(iommu->vgsts & DMA_GSTS_TES));
 #endif
 
 	qi_desc_dev_iotlb(sid, pfsid, qdep, addr, mask, &desc);
@@ -1696,8 +1712,12 @@ void qi_flush_dev_iotlb_pasid(struct intel_iommu *iommu, u16 sid, u16 pfsid,
 	if (!(iommu->gcmd & DMA_GCMD_TE))
 		return;
 #else
-	if (!(iommu->vgsts & DMA_GSTS_TES))
-		return;
+	/*
+	 * Translation is never disabled after enabling during initialization.
+	 * And this is not called before IOMMU is initialized in pKVM.
+	 * If this is called with translation disabled, it means a bug in pKVM!
+	 */
+	BUG_ON(!(iommu->vgsts & DMA_GSTS_TES));
 #endif
 
 	qi_desc_dev_iotlb_pasid(sid, pfsid, pasid,
@@ -1807,7 +1827,7 @@ int dmar_enable_qi(struct intel_iommu *iommu)
 	if (iommu->qi)
 		return 0;
 
-	iommu->qi = kmalloc(sizeof(*qi), GFP_ATOMIC);
+	iommu->qi = kzalloc(sizeof(*qi), GFP_ATOMIC);
 	if (!iommu->qi)
 		return -ENOMEM;
 
@@ -1997,9 +2017,14 @@ void dmar_msi_write(int irq, struct msi_msg *msg)
 	unsigned long flag;
 
 	raw_spin_lock_irqsave(&iommu->register_lock, flag);
-	dmar_writel(iommu, reg + 4, msg->data);
-	dmar_writel(iommu, reg + 8, msg->address_lo);
-	dmar_writel(iommu, reg + 12, msg->address_hi);
+	if (pkvm_enabled()) {
+		pkvm_write_iommu_msi(iommu, reg, msg->data,
+				     msg->address_lo, msg->address_hi);
+	} else {
+		dmar_writel(iommu, reg + 4, msg->data);
+		dmar_writel(iommu, reg + 8, msg->address_lo);
+		dmar_writel(iommu, reg + 12, msg->address_hi);
+	}
 	raw_spin_unlock_irqrestore(&iommu->register_lock, flag);
 }
 

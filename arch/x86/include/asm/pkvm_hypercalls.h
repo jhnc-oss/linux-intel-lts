@@ -26,7 +26,6 @@ PKVM_HC(dump_vmexit_trace)
 
 /* KVM ops */
 PKVM_HC(check_processor_compatibility)
-PKVM_HC(enable_virtualization_cpu)
 PKVM_HC(vm_init)
 PKVM_HC(vm_finalize)
 PKVM_HC_OUT(vm_destroy)
@@ -93,6 +92,7 @@ PKVM_HC(vm_mmu_age)
 #ifdef CONFIG_PKVM_INTEL
 PKVM_HC_OUT(iommu_mmio_read)
 PKVM_HC(iommu_mmio_write)
+PKVM_HC(iommu_msi_write)
 PKVM_HC(iommu_iec_flush)
 PKVM_HC_IN(iommu_clear_ce)
 PKVM_HC_INOUT(iommu_set_lm_ce)
@@ -104,6 +104,7 @@ PKVM_HC_IN(iommu_alloc_domain)
 PKVM_HC_OUT(iommu_free_domain)
 PKVM_HC_INOUT(iommu_domain_map)
 PKVM_HC(iommu_domain_unmap)
+PKVM_HC_IN(iommu_modify_irte)
 #endif
 
 #undef PKVM_HC

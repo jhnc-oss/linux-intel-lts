@@ -40,6 +40,7 @@ static const struct address_space_operations swap_aops = {
 struct address_space swap_space __read_mostly = {
 	.a_ops = &swap_aops,
 };
+EXPORT_SYMBOL_GPL(swap_space);
 
 static bool enable_vma_readahead __read_mostly = true;
 
@@ -412,11 +413,12 @@ struct folio *__read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 	struct folio *new_folio = NULL;
 	struct folio *result = NULL;
 	void *shadow = NULL;
+	size_t count = 0;
 
 	*new_page_allocated = false;
 	for (;;) {
 		int err;
-
+		bool skip = false;
 		/*
 		 * Check the swap cache first, if a cached folio is found,
 		 * return it unlocked. The caller will lock and check it.
@@ -470,6 +472,10 @@ struct folio *__read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 		 * __read_swap_cache_async(), which has set SWAP_HAS_CACHE
 		 * in swap_map, but not yet added its folio to swap cache.
 		 */
+		trace_android_rvh_read_swap_cache_async_timeout(&count, &skip);
+		if (skip)
+			continue;
+
 		schedule_timeout_uninterruptible(1);
 	}
 
@@ -540,6 +546,8 @@ struct folio *read_swap_cache_async(swp_entry_t entry, gfp_t gfp_mask,
 	put_swap_device(si);
 	return folio;
 }
+
+EXPORT_SYMBOL_GPL(read_swap_cache_async);
 
 static unsigned int __swapin_nr_pages(unsigned long prev_offset,
 				      unsigned long offset,

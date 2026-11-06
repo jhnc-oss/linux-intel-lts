@@ -2486,6 +2486,10 @@ int vmx_set_msr(struct kvm_vcpu *vcpu, struct msr_data *msr_info)
 						      MSR_TYPE_RW);
 			vcpu->arch.xfd_no_write_intercept = true;
 			vmx_update_exception_bitmap(vcpu);
+#ifdef __PKVM_HYP__
+			if (!pkvm_is_protected_vcpu(vcpu))
+				to_pkvm_vcpu(vcpu)->shared_vcpu->arch.xfd_no_write_intercept = true;
+#endif
 		}
 		break;
 	case MSR_IA32_FRED_RSP0:
@@ -4508,7 +4512,7 @@ static void vmx_update_msr_bitmap_x2apic(struct kvm_vcpu *vcpu)
 	 * mode, only the current timer count needs on-demand emulation by KVM.
 	 */
 	if (mode & MSR_BITMAP_MODE_X2APIC_APICV) {
-		msr_bitmap[read_idx] = ~kvm_lapic_readable_reg_mask(vcpu->arch.apic);
+		msr_bitmap[read_idx] = ~kvm_x2apic_disable_read_intercept_reg_mask(vcpu);
 #ifdef __PKVM_HYP__
 		if (vcpu->arch.apic->guest_apic_protected)
 			/*
@@ -4534,7 +4538,6 @@ static void vmx_update_msr_bitmap_x2apic(struct kvm_vcpu *vcpu)
 				  !(mode & MSR_BITMAP_MODE_X2APIC));
 
 	if (mode & MSR_BITMAP_MODE_X2APIC_APICV) {
-		vmx_enable_intercept_for_msr(vcpu, X2APIC_MSR(APIC_TMCCT), MSR_TYPE_RW);
 		vmx_disable_intercept_for_msr(vcpu, X2APIC_MSR(APIC_EOI), MSR_TYPE_W);
 		vmx_disable_intercept_for_msr(vcpu, X2APIC_MSR(APIC_SELF_IPI), MSR_TYPE_W);
 		if (enable_ipiv)
@@ -5179,6 +5182,11 @@ static int vmx_alloc_ipiv_pid_table(struct kvm *kvm)
 {
 #ifndef __PKVM_HYP__
 	struct page *pages;
+#else
+	struct kvm *shared_kvm = to_pkvm(kvm)->shared_kvm;
+	u64 *pid_table;
+	int ret;
+#endif
 	struct kvm_vmx *kvm_vmx = to_kvm_vmx(kvm);
 
 	if (!irqchip_in_kernel(kvm) || !enable_ipiv)
@@ -5187,42 +5195,18 @@ static int vmx_alloc_ipiv_pid_table(struct kvm *kvm)
 	if (kvm_vmx->pid_table)
 		return 0;
 
+#ifndef __PKVM_HYP__
 	pages = alloc_pages(GFP_KERNEL_ACCOUNT | __GFP_ZERO,
 			    vmx_get_pid_table_order(kvm));
 	if (!pages)
 		return -ENOMEM;
 
 	kvm_vmx->pid_table = (void *)page_address(pages);
-	return 0;
 #else
-	struct kvm *shared_kvm = to_pkvm(kvm)->shared_kvm;
-	struct kvm_vmx *kvm_vmx = to_kvm_vmx(kvm);
-	struct kvm_vmx *shared_kvm_vmx;
-	u64 *pid_table;
-	int ret;
+	pid_table = kern_pkvm_va(READ_ONCE(to_kvm_vmx(shared_kvm)->pid_table));
+	if (!pid_table)
+		return -EINVAL;
 
-	if (!irqchip_in_kernel(shared_kvm) || !enable_ipiv)
-		return 0;
-
-	pkvm_spin_lock(&to_pkvm(kvm)->lock);
-
-	if (kvm_vmx->pid_table) {
-		/* The pid_table is already set. */
-		ret = 0;
-		goto unlock;
-	}
-
-	shared_kvm_vmx = to_kvm_vmx(shared_kvm);
-
-	if (shared_kvm->arch.max_vcpu_ids > KVM_MAX_VCPU_IDS ||
-	    !shared_kvm_vmx->pid_table) {
-		ret = -EINVAL;
-		goto unlock;
-	}
-
-	kvm->arch.irqchip_mode = shared_kvm->arch.irqchip_mode;
-	kvm->arch.max_vcpu_ids = shared_kvm->arch.max_vcpu_ids;
-	pid_table = kern_pkvm_va(shared_kvm_vmx->pid_table);
 	/*
 	 * Although the contents in pid_table is not secret since it is
 	 * constructed following the SDM, still donate the pid_table pages to
@@ -5233,13 +5217,11 @@ static int vmx_alloc_ipiv_pid_table(struct kvm *kvm)
 				   PAGE_SIZE << vmx_get_pid_table_order(kvm),
 				   true);
 	if (ret)
-		goto unlock;
+		return ret;
 
 	kvm_vmx->pid_table = pid_table;
-unlock:
-	pkvm_spin_unlock(&to_pkvm(kvm)->lock);
-	return ret;
 #endif
+	return 0;
 }
 
 int vmx_vcpu_precreate(struct kvm *kvm)
@@ -5442,6 +5424,10 @@ void vmx_vcpu_reset(struct kvm_vcpu *vcpu, bool init_event)
 
 	vmx->rmode.vm86_active = 0;
 	vmx->spec_ctrl = 0;
+#ifdef __PKVM_HYP__
+	if (pkvm_is_protected_vcpu(vcpu))
+		vmx->spec_ctrl = this_cpu_read(x86_spec_ctrl_current);
+#endif
 
 	vmx->msr_ia32_umwait_control = 0;
 
@@ -6078,7 +6064,7 @@ static int handle_io(struct kvm_vcpu *vcpu)
 	 */
 	if ((vmx_get_exit_qual(vcpu) & 16) != 0) {
 		if (pkvm_is_protected_vcpu(vcpu)) {
-			kvm_queue_exception(vcpu, GP_VECTOR);
+			kvm_inject_gp(vcpu, 0);
 			return 1;
 		}
 	}
@@ -6473,7 +6459,7 @@ static int handle_task_switch(struct kvm_vcpu *vcpu)
 	 * the pVM by injecting #GP.
 	 */
 	if (pkvm_is_protected_vcpu(vcpu)) {
-		kvm_queue_exception(vcpu, GP_VECTOR);
+		kvm_inject_gp(vcpu, 0);
 		return 1;
 	}
 #endif
@@ -6941,10 +6927,11 @@ static int handle_wrmsr_imm(struct kvm_vcpu *vcpu)
 #ifdef __PKVM_HYP__
 static int handle_init(struct kvm_vcpu *vcpu)
 {
+	pkvm_handle_init_signal();
 	/*
-	 * EXIT_REASON_INIT_SIGNAL is caused by the pKVM hypervisor sending INIT
-	 * signal to kick vCPU out of non-root mode. Nothing needs to be handled
-	 * by the pKVM hypervisor, and also no need to involve the host.
+	 * EXIT_REASON_INIT_SIGNAL is only caused by the pKVM hypervisor sending
+	 * INIT signal to kick vCPU out of non-root mode. So no need to involve
+	 * the host.
 	 */
 	return 1;
 }
@@ -8146,6 +8133,19 @@ static void vmx_complete_interrupts(struct vcpu_vmx *vmx)
 
 void vmx_cancel_injection(struct kvm_vcpu *vcpu)
 {
+#ifdef __PKVM_HYP__
+	/*
+	 * A malicious host may request cancel_injection twice to cancel
+	 * a pVM's soft interrupts or exceptions, as the second call finds
+	 * VM_ENTRY_INTR_INFO_FIELD already zeroed and unconditionally clears
+	 * previous canceled events. Prevent this by returning early if
+	 * VM_ENTRY_INTR_INFO_FIELD is already zeroed and thus there is
+	 * nothing to do.
+	 */
+	if (pkvm_is_protected_vcpu(vcpu) &&
+	    !(vmcs_read32(VM_ENTRY_INTR_INFO_FIELD) & VECTORING_INFO_VALID_MASK))
+		return;
+#endif
 	__vmx_complete_interrupts(vcpu,
 				  vmcs_read32(VM_ENTRY_INTR_INFO_FIELD),
 				  VM_ENTRY_INSTRUCTION_LEN,
@@ -8580,6 +8580,24 @@ void vmx_vcpu_free(struct kvm_vcpu *vcpu)
 	free_loaded_vmcs(vmx->loaded_vmcs);
 #ifndef __PKVM_HYP__
 	free_page((unsigned long)vmx->ve_info);
+#endif
+#ifdef __PKVM_HYP__
+	if (vmx_can_use_ipiv(vcpu)) {
+		/*
+		 * Clear the PI descriptor table entry to prevent other vCPUs
+		 * from sending IPIs triggering writing to the vCPU's pi_desc
+		 * memory after it is already unshared back to the host and
+		 * thus may be donated.
+		 *
+		 * FIXME: in the case when vmx_vcpu_free() is called in the
+		 * failure path when vCPU creation failed due to an already
+		 * existing vCPU with the same vcpu_id, this clearing means
+		 * unexpected disabling of IPIv for that existing good vCPU.
+		 * This could be fixed by checking for duplicate vcpu_id before
+		 * creating the vCPU. See TODO in __vcpu_create().
+		 */
+		WRITE_ONCE(to_kvm_vmx(vcpu->kvm)->pid_table[vcpu->vcpu_id], 0);
+	}
 #endif
 }
 
@@ -10010,11 +10028,20 @@ static void update_protected_vcpu_state(struct kvm_vcpu *vcpu,
 					struct kvm_vcpu *shared_vcpu)
 {
 	switch (vmx_get_exit_reason(vcpu).basic) {
-	case EXIT_REASON_IO_INSTRUCTION:
-		/* Only need to update RAX for the input data */
-		if ((vmx_get_exit_qual(vcpu) & 8) != 0)
-			kvm_rax_write(vcpu, shared_vcpu->arch.regs[VCPU_REGS_RAX]);
+	case EXIT_REASON_IO_INSTRUCTION: {
+		unsigned long exit_qual = vmx_get_exit_qual(vcpu);
+
+		/* Only need to update RAX for the input data (IN) */
+		if ((exit_qual & 8) != 0) {
+			unsigned int size = (exit_qual & 7) + 1;
+			unsigned long val = (size < 4) ? kvm_rax_read(vcpu) : 0;
+			unsigned long host_rax = shared_vcpu->arch.regs[VCPU_REGS_RAX];
+
+			memcpy(&val, &host_rax, size);
+			kvm_rax_write(vcpu, val);
+		}
 		fallthrough;
+	}
 	case EXIT_REASON_WBINVD:
 	case EXIT_REASON_PAUSE_INSTRUCTION:
 		WARN_ON_ONCE(kvm_skip_emulated_instruction(vcpu) != 1);
@@ -10026,8 +10053,8 @@ static void update_protected_vcpu_state(struct kvm_vcpu *vcpu,
 
 		if (vmx_get_exit_reason(vcpu).basic == EXIT_REASON_MSR_READ &&
 		    !to_pkvm_vcpu(vcpu)->host_emulated_msr_err) {
-			kvm_rax_write(vcpu, shared_vcpu->arch.regs[VCPU_REGS_RAX]);
-			kvm_rdx_write(vcpu, shared_vcpu->arch.regs[VCPU_REGS_RDX]);
+			kvm_rax_write(vcpu, (u32)shared_vcpu->arch.regs[VCPU_REGS_RAX]);
+			kvm_rdx_write(vcpu, (u32)shared_vcpu->arch.regs[VCPU_REGS_RDX]);
 		}
 
 		WARN_ON_ONCE(kvm_complete_insn_gp(vcpu,
@@ -10052,7 +10079,7 @@ static void update_protected_vcpu_state(struct kvm_vcpu *vcpu,
 		break;
 	case EXIT_REASON_VMCALL:
 		/*
-		 * If the memory share hypercall has been handled by the host,
+		 * If the memory (un)share hypercall has been handled by the host,
 		 * not by pKVM alone, it indicates that there were not enough
 		 * pages in the memcache for pKVM to handle the hypercall, and
 		 * now the host has refilled the memcache with the needed number
@@ -10060,7 +10087,8 @@ static void update_protected_vcpu_state(struct kvm_vcpu *vcpu,
 		 * the instruction, to let the guest re-issue the hypercall.
 		 * See also comments in kvm_pkvm_hypercall().
 		 */
-		if (kvm_rax_read(vcpu) == PKVM_GHC_SHARE_MEM)
+		if (kvm_rax_read(vcpu) == PKVM_GHC_SHARE_MEM ||
+		    kvm_rax_read(vcpu) == PKVM_GHC_UNSHARE_MEM)
 			break;
 
 		/*
@@ -10122,6 +10150,7 @@ static void share_nonprotected_vcpu_state(struct kvm_vcpu *vcpu,
 				vmcs_read32(VM_EXIT_INSTRUCTION_LEN);
 		}
 		break;
+	}
 	case EXIT_REASON_EPT_VIOLATION:
 		to_vmx(shared_vcpu)->exit_gpa = vmcs_read64(GUEST_PHYSICAL_ADDRESS);
 		fallthrough;
@@ -10137,6 +10166,18 @@ static void share_nonprotected_vcpu_state(struct kvm_vcpu *vcpu,
 		to_vmx(shared_vcpu)->instr_info = vmcs_read32(VMX_INSTRUCTION_INFO);
 		shared_vcpu->arch.event_exit_inst_len = vmcs_read32(VM_EXIT_INSTRUCTION_LEN);
 		break;
+	case EXIT_REASON_TASK_SWITCH: {
+		u32 idt_vectoring_info = to_vmx(vcpu)->idt_vectoring_info;
+
+		if (((u32)vmx_get_exit_qual(vcpu) >> 30) == TASK_SWITCH_GATE &&
+		    (idt_vectoring_info & VECTORING_INFO_VALID_MASK) &&
+		    (idt_vectoring_info & VECTORING_INFO_TYPE_MASK) == INTR_TYPE_HARD_EXCEPTION) {
+			if (idt_vectoring_info & VECTORING_INFO_DELIVER_CODE_MASK)
+				to_vmx(shared_vcpu)->error_code =
+					vmcs_read32(IDT_VECTORING_ERROR_CODE);
+		}
+
+		break;
 	}
 	default:
 		break;
@@ -10149,16 +10190,27 @@ static void share_protected_vcpu_state(struct kvm_vcpu *vcpu,
 	int reg;
 
 	switch (vmx_get_exit_reason(vcpu).basic) {
-	case EXIT_REASON_IO_INSTRUCTION:
-		/* IO output/Input data */
-		shared_vcpu->arch.regs[VCPU_REGS_RAX] = kvm_rax_read(vcpu);
+	case EXIT_REASON_IO_INSTRUCTION: {
+		unsigned long exit_qual = vmx_get_exit_qual(vcpu);
+
+		/*
+		 * Only share RAX for OUT instructions to prevent leaking
+		 * register residue, and mask it to the I/O operand size.
+		 */
+		if ((exit_qual & 8) == 0) { /* OUT */
+			unsigned int size = (exit_qual & 7) + 1;
+
+			shared_vcpu->arch.regs[VCPU_REGS_RAX] =
+				kvm_rax_read(vcpu) & GENMASK(size * 8 - 1, 0);
+		}
 		break;
+	}
 	case EXIT_REASON_MSR_WRITE:
-		shared_vcpu->arch.regs[VCPU_REGS_RAX] = kvm_rax_read(vcpu);
-		shared_vcpu->arch.regs[VCPU_REGS_RDX] = kvm_rdx_read(vcpu);
+		shared_vcpu->arch.regs[VCPU_REGS_RAX] = (u32)kvm_rax_read(vcpu);
+		shared_vcpu->arch.regs[VCPU_REGS_RDX] = (u32)kvm_rdx_read(vcpu);
 		fallthrough;
 	case EXIT_REASON_MSR_READ:
-		shared_vcpu->arch.regs[VCPU_REGS_RCX] = kvm_rcx_read(vcpu);
+		shared_vcpu->arch.regs[VCPU_REGS_RCX] = (u32)kvm_rcx_read(vcpu);
 		break;
 	case EXIT_REASON_EPT_VIOLATION:
 		to_vmx(shared_vcpu)->exit_gpa = vmcs_read64(GUEST_PHYSICAL_ADDRESS);

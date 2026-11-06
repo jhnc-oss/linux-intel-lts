@@ -259,7 +259,7 @@ bool __read_mostly enable_device_posted_irqs = true;
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(enable_device_posted_irqs);
 
 #ifndef __PKVM_HYP__
-const struct _kvm_stats_desc kvm_vm_stats_desc[] = {
+const struct kvm_stats_desc kvm_vm_stats_desc[] = {
 	KVM_GENERIC_VM_STATS(),
 	STATS_DESC_COUNTER(VM, mmu_shadow_zapped),
 	STATS_DESC_COUNTER(VM, mmu_pte_write),
@@ -285,7 +285,7 @@ const struct kvm_stats_header kvm_vm_stats_header = {
 		       sizeof(kvm_vm_stats_desc),
 };
 
-const struct _kvm_stats_desc kvm_vcpu_stats_desc[] = {
+const struct kvm_stats_desc kvm_vcpu_stats_desc[] = {
 	KVM_GENERIC_VCPU_STATS(),
 	STATS_DESC_COUNTER(VCPU, pf_taken),
 	STATS_DESC_COUNTER(VCPU, pf_fixed),
@@ -370,6 +370,9 @@ static const u32 msrs_to_save_base[] = {
 	MSR_IA32_U_CET, MSR_IA32_S_CET,
 	MSR_IA32_PL0_SSP, MSR_IA32_PL1_SSP, MSR_IA32_PL2_SSP,
 	MSR_IA32_PL3_SSP, MSR_IA32_INT_SSP_TAB,
+	MSR_IA32_DEBUGCTLMSR,
+	MSR_IA32_LASTBRANCHFROMIP, MSR_IA32_LASTBRANCHTOIP,
+	MSR_IA32_LASTINTFROMIP, MSR_IA32_LASTINTTOIP,
 };
 
 static const u32 msrs_to_save_pmu[] = {
@@ -714,13 +717,13 @@ int kvm_set_user_return_msr(unsigned slot, u64 value, u64 mask)
 }
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_set_user_return_msr);
 
-#ifndef __PKVM_HYP__
 u64 kvm_get_user_return_msr(unsigned int slot)
 {
 	return this_cpu_ptr(user_return_msrs)->values[slot].curr;
 }
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_get_user_return_msr);
 
+#ifndef __PKVM_HYP__
 static void drop_user_return_notifiers(void)
 {
 	struct kvm_user_return_msrs *msrs = this_cpu_ptr(user_return_msrs);
@@ -862,7 +865,6 @@ void kvm_deliver_exception_payload(struct kvm_vcpu *vcpu,
 }
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_deliver_exception_payload);
 
-#ifndef __PKVM_HYP__
 static void kvm_queue_exception_vmexit(struct kvm_vcpu *vcpu, unsigned int vector,
 				       bool has_error_code, u32 error_code,
 				       bool has_payload, unsigned long payload)
@@ -877,7 +879,6 @@ static void kvm_queue_exception_vmexit(struct kvm_vcpu *vcpu, unsigned int vecto
 	ex->has_payload = has_payload;
 	ex->payload = payload;
 }
-#endif /* !__PKVM_HYP__ */
 
 static void kvm_multiple_exception(struct kvm_vcpu *vcpu, unsigned int nr,
 				   bool has_error, u32 error_code,
@@ -915,9 +916,6 @@ static void kvm_multiple_exception(struct kvm_vcpu *vcpu, unsigned int nr,
 		vcpu->arch.exception.error_code = error_code;
 		vcpu->arch.exception.has_payload = has_payload;
 		vcpu->arch.exception.payload = payload;
-		if (!is_guest_mode(vcpu))
-			kvm_deliver_exception_payload(vcpu,
-						      &vcpu->arch.exception);
 		return;
 	}
 
@@ -967,13 +965,11 @@ void kvm_queue_exception_p(struct kvm_vcpu *vcpu, unsigned nr,
 }
 EXPORT_SYMBOL_FOR_KVM_INTERNAL(kvm_queue_exception_p);
 
-#ifndef __PKVM_HYP__
 static void kvm_queue_exception_e_p(struct kvm_vcpu *vcpu, unsigned nr,
 				    u32 error_code, unsigned long payload)
 {
 	kvm_multiple_exception(vcpu, nr, true, error_code, true, payload);
 }
-#endif /* !__PKVM_HYP__ */
 
 void kvm_requeue_exception(struct kvm_vcpu *vcpu, unsigned int nr,
 			   bool has_error_code, u32 error_code, bool nested,
@@ -1029,6 +1025,7 @@ static int complete_emulated_insn_gp(struct kvm_vcpu *vcpu, int err)
 	return kvm_emulate_instruction(vcpu, EMULTYPE_NO_DECODE | EMULTYPE_SKIP |
 				       EMULTYPE_COMPLETE_USER_EXIT);
 }
+#endif /* !__PKVM_HYP__ */
 
 void kvm_inject_page_fault(struct kvm_vcpu *vcpu, struct x86_exception *fault)
 {
@@ -1047,6 +1044,7 @@ void kvm_inject_page_fault(struct kvm_vcpu *vcpu, struct x86_exception *fault)
 					fault->address);
 }
 
+#ifndef __PKVM_HYP__
 void kvm_inject_emulated_page_fault(struct kvm_vcpu *vcpu,
 				    struct x86_exception *fault)
 {
@@ -3957,11 +3955,11 @@ static void kvm_vcpu_flush_tlb_all(struct kvm_vcpu *vcpu)
 	kvm_clear_request(KVM_REQ_TLB_FLUSH_CURRENT, vcpu);
 }
 
-#ifndef __PKVM_HYP__
 static void kvm_vcpu_flush_tlb_guest(struct kvm_vcpu *vcpu)
 {
 	++vcpu->stat.tlb_flush;
 
+#ifndef __PKVM_HYP__
 	if (!tdp_enabled) {
 		/*
 		 * A TLB flush on behalf of the guest is equivalent to
@@ -3972,16 +3970,18 @@ static void kvm_vcpu_flush_tlb_guest(struct kvm_vcpu *vcpu)
 		kvm_mmu_sync_roots(vcpu);
 		kvm_mmu_sync_prev_roots(vcpu);
 	}
+#endif
 
 	kvm_x86_call(flush_tlb_guest)(vcpu);
 
+#ifndef __PKVM_HYP__
 	/*
 	 * Flushing all "guest" TLB is always a superset of Hyper-V's fine
 	 * grained flushing.
 	 */
 	kvm_hv_vcpu_purge_flush_tlb(vcpu);
+#endif
 }
-#endif /* !__PKVM_HYP__ */
 
 
 static inline void kvm_vcpu_flush_tlb_current(struct kvm_vcpu *vcpu)
@@ -5921,18 +5921,8 @@ static int kvm_vcpu_ioctl_x86_set_mce(struct kvm_vcpu *vcpu,
 	return 0;
 }
 
-static void kvm_vcpu_ioctl_x86_get_vcpu_events(struct kvm_vcpu *vcpu,
-					       struct kvm_vcpu_events *events)
+static struct kvm_queued_exception *kvm_get_exception_to_save(struct kvm_vcpu *vcpu)
 {
-	struct kvm_queued_exception *ex;
-
-	process_nmi(vcpu);
-
-#ifdef CONFIG_KVM_SMM
-	if (kvm_check_request(KVM_REQ_SMI, vcpu))
-		process_smi(vcpu);
-#endif
-
 	/*
 	 * KVM's ABI only allows for one exception to be migrated.  Luckily,
 	 * the only time there can be two queued exceptions is if there's a
@@ -5943,21 +5933,46 @@ static void kvm_vcpu_ioctl_x86_get_vcpu_events(struct kvm_vcpu *vcpu,
 	if (vcpu->arch.exception_vmexit.pending &&
 	    !vcpu->arch.exception.pending &&
 	    !vcpu->arch.exception.injected)
-		ex = &vcpu->arch.exception_vmexit;
-	else
-		ex = &vcpu->arch.exception;
+		return &vcpu->arch.exception_vmexit;
+
+	return &vcpu->arch.exception;
+}
+
+static void kvm_handle_exception_payload_quirk(struct kvm_vcpu *vcpu)
+{
+	struct kvm_queued_exception *ex = kvm_get_exception_to_save(vcpu);
 
 	/*
-	 * In guest mode, payload delivery should be deferred if the exception
-	 * will be intercepted by L1, e.g. KVM should not modifying CR2 if L1
-	 * intercepts #PF, ditto for DR6 and #DBs.  If the per-VM capability,
-	 * KVM_CAP_EXCEPTION_PAYLOAD, is not set, userspace may or may not
-	 * propagate the payload and so it cannot be safely deferred.  Deliver
-	 * the payload if the capability hasn't been requested.
+	 * If KVM_CAP_EXCEPTION_PAYLOAD is disabled, then (prematurely) deliver
+	 * the pending exception payload when userspace saves *any* vCPU state
+	 * that interacts with exception payloads to avoid breaking userspace.
+	 *
+	 * Architecturally, KVM must not deliver an exception payload until the
+	 * exception is actually injected, e.g. to avoid losing pending #DB
+	 * information (which VMX tracks in the VMCS), and to avoid clobbering
+	 * state if the exception is never injected for whatever reason.  But
+	 * if KVM_CAP_EXCEPTION_PAYLOAD isn't enabled, then userspace may or
+	 * may not propagate the payload across save+restore, and so KVM can't
+	 * safely defer delivery of the payload.
 	 */
 	if (!vcpu->kvm->arch.exception_payload_enabled &&
 	    ex->pending && ex->has_payload)
 		kvm_deliver_exception_payload(vcpu, ex);
+}
+
+static void kvm_vcpu_ioctl_x86_get_vcpu_events(struct kvm_vcpu *vcpu,
+					       struct kvm_vcpu_events *events)
+{
+	struct kvm_queued_exception *ex = kvm_get_exception_to_save(vcpu);
+
+	process_nmi(vcpu);
+
+#ifdef CONFIG_KVM_SMM
+	if (kvm_check_request(KVM_REQ_SMI, vcpu))
+		process_smi(vcpu);
+#endif
+
+	kvm_handle_exception_payload_quirk(vcpu);
 
 	memset(events, 0, sizeof(*events));
 
@@ -6147,6 +6162,8 @@ static int kvm_vcpu_ioctl_x86_get_debugregs(struct kvm_vcpu *vcpu,
 	if (vcpu->kvm->arch.has_protected_state &&
 	    vcpu->arch.guest_state_protected)
 		return -EINVAL;
+
+	kvm_handle_exception_payload_quirk(vcpu);
 
 	memset(dbgregs, 0, sizeof(*dbgregs));
 
@@ -8639,7 +8656,13 @@ static int emulator_read_write_onepage(unsigned long addr, void *val,
 	WARN_ON(vcpu->mmio_nr_fragments >= KVM_MAX_MMIO_FRAGMENTS);
 	frag = &vcpu->mmio_fragments[vcpu->mmio_nr_fragments++];
 	frag->gpa = gpa;
-	frag->data = val;
+	if (write && bytes <= 8u) {
+		frag->val = 0;
+		frag->data = &frag->val;
+		memcpy(&frag->val, val, bytes);
+	} else {
+		frag->data = val;
+	}
 	frag->len = bytes;
 	return X86EMUL_CONTINUE;
 }
@@ -8653,6 +8676,9 @@ static int emulator_read_write(struct x86_emulate_ctxt *ctxt,
 	struct kvm_vcpu *vcpu = emul_to_vcpu(ctxt);
 	gpa_t gpa;
 	int rc;
+
+	if (WARN_ON_ONCE((bytes > 8u || !ops->write) && object_is_on_stack(val)))
+		return X86EMUL_UNHANDLEABLE;
 
 	if (ops->read_write_prepare &&
 		  ops->read_write_prepare(vcpu, val, bytes))
@@ -10856,8 +10882,9 @@ static int kvm_pkvm_hypercall(struct kvm_vcpu *vcpu)
 		break;
 	}
 	case PKVM_GHC_SHARE_MEM:
+	case PKVM_GHC_UNSHARE_MEM:
 		/*
-		 * The only case when pKVM forwards this hypercall to the host
+		 * The only case when pKVM forwards these hypercalls to the host
 		 * is when it asks the host to refill the memcache with the
 		 * needed amount of pages.
 		 */
@@ -12406,6 +12433,9 @@ static int complete_emulated_mmio(struct kvm_vcpu *vcpu)
 		frag++;
 		vcpu->mmio_cur_fragment++;
 	} else {
+		if (WARN_ON_ONCE(frag->data == &frag->val))
+			return -EIO;
+
 		/* Go forward to the next mmio piece. */
 		frag->data += len;
 		frag->gpa += len;
@@ -12442,11 +12472,29 @@ static void kvm_load_guest_fpu(struct kvm_vcpu *vcpu)
 	/* Exclude PKRU, it's restored separately immediately after VM-Exit. */
 	fpu_swap_kvm_fpstate(&vcpu->arch.guest_fpu, true);
 	trace_kvm_fpu(1);
+#ifdef __PKVM_HYP__
+	/*
+	 * Clear TIF_NEED_FPU_LOAD to indicate the guest FPU state is loaded on
+	 * the hardware.
+	 *
+	 * Although npVM's FPU state is loaded by the host rather than the pKVM,
+	 * the MSR_IA32_XFD WRMSR vmexit handling is done by the pKVM, which
+	 * still needs to update this flag properly for fpu_update_guest_xfd().
+	 */
+	clear_thread_flag(TIF_NEED_FPU_LOAD);
+#endif
 }
 
 /* When vcpu_run ends, restore user space FPU context. */
 static void kvm_put_guest_fpu(struct kvm_vcpu *vcpu)
 {
+#ifdef __PKVM_HYP__
+	/*
+	 * Set TIF_NEED_FPU_LOAD to indicate the guest FPU state is not loaded
+	 * on the hardware, pairs with the clearing in kvm_load_guest_fpu.
+	 */
+	set_thread_flag(TIF_NEED_FPU_LOAD);
+#endif
 	if (KVM_BUG_ON(!vcpu->arch.guest_fpu.fpstate->in_use, vcpu->kvm))
 		return;
 
@@ -12697,6 +12745,8 @@ static void __get_sregs_common(struct kvm_vcpu *vcpu, struct kvm_sregs *sregs)
 
 	if (vcpu->arch.guest_state_protected)
 		goto skip_protected_regs;
+
+	kvm_handle_exception_payload_quirk(vcpu);
 
 	kvm_get_segment(vcpu, &sregs->cs, VCPU_SREG_CS);
 	kvm_get_segment(vcpu, &sregs->ds, VCPU_SREG_DS);
@@ -15078,6 +15128,16 @@ static int __pkvm_vcpu_enter_guest(struct kvm_vcpu *vcpu, bool force_immediate_e
 		if (kvm_check_request(KVM_REQ_TLB_FLUSH_CURRENT, vcpu))
 			kvm_vcpu_flush_tlb_current(vcpu);
 
+		if (kvm_check_request(KVM_REQ_TLB_FLUSH_GUEST, vcpu))
+			kvm_vcpu_flush_tlb_guest(vcpu);
+
+		if (kvm_check_request(KVM_REQ_TRIPLE_FAULT, vcpu)) {
+			pkvm_make_req_to_host(HOST_TRIPLE_FAULT, vcpu);
+			if (pkvm_is_protected_vcpu(vcpu))
+				vcpu->arch.mp_state = KVM_MP_STATE_STOPPED;
+			return 0;
+		}
+
 		if (kvm_check_request(KVM_REQ_APICV_UPDATE, vcpu))
 			kvm_vcpu_update_apicv(vcpu);
 
@@ -15090,12 +15150,7 @@ static int __pkvm_vcpu_enter_guest(struct kvm_vcpu *vcpu, bool force_immediate_e
 
 	kvm_x86_call(prepare_switch_to_guest)(vcpu);
 
-	/*
-	 * Make sure vcpu->mode is changed to IN_GUEST_MODE before
-	 * running to mark this vcpu should be kicked for any new
-	 * vcpu request.
-	 */
-	smp_store_mb(vcpu->mode, IN_GUEST_MODE);
+	pkvm_set_vcpu_in_guest(vcpu);
 
 	if (enable_apicv && kvm_lapic_enabled(vcpu))
 		kvm_x86_call(sync_pir_to_irr)(vcpu);
@@ -15106,8 +15161,20 @@ static int __pkvm_vcpu_enter_guest(struct kvm_vcpu *vcpu, bool force_immediate_e
 		req_immediate_exit = force_immediate_exit;
 
 	run_flags = 0;
-	if (req_immediate_exit)
+	if (req_immediate_exit) {
 		run_flags |= KVM_RUN_FORCE_IMMEDIATE_EXIT;
+	} else if (READ_ONCE(vcpu->mode) == EXITING_GUEST_MODE ||
+		 kvm_request_pending(vcpu)) {
+		pkvm_set_vcpu_outside_guest(vcpu);
+		/*
+		 * No need to cancel the previously injected events as the event
+		 * is injected via either handling exit reasons or the PV
+		 * interface which both happen on this CPU, thus there is no new
+		 * event injection request. And the vCPU run loop also doesn't
+		 * break out in this case, so no need to cancel.
+		 */
+		return 1;
+	}
 
 	if (vcpu->arch.guest_fpu.xfd_err)
 		wrmsrl(MSR_IA32_XFD_ERR, vcpu->arch.guest_fpu.xfd_err);
@@ -15135,12 +15202,7 @@ static int __pkvm_vcpu_enter_guest(struct kvm_vcpu *vcpu, bool force_immediate_e
 		kvm_update_dr7(vcpu);
 	}
 
-	/*
-	 * Make sure vcpu->mode is changed to OUTSIDE_GUEST_MODE after
-	 * vmexit to mark this vcpu no need to be kicked for any new
-	 * vcpu request.
-	 */
-	smp_store_mb(vcpu->mode, OUTSIDE_GUEST_MODE);
+	pkvm_set_vcpu_outside_guest(vcpu);
 
 	if (unlikely(exit_fastpath == EXIT_FASTPATH_REENTER_GUEST))
 		return 1;
@@ -15180,6 +15242,9 @@ int pkvm_vcpu_enter_guest(struct kvm_vcpu *vcpu, bool force_immediate_exit,
 	pkvm_vcpu->reqs_to_host = 0;
 
 	vcpu->arch.last_vmentry_cpu = vcpu->cpu;
+
+	/* Snapshot host PKRU on every entry to prevent host-tampering bypasses */
+	vcpu->arch.host_pkru = read_pkru();
 
 	kvm_load_guest_fpu(vcpu);
 
@@ -15235,15 +15300,14 @@ int pkvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 
 	switch (nr) {
 	case PKVM_GHC_SHARE_MEM:
+	case PKVM_GHC_UNSHARE_MEM:
 		pkvm_guest_mmu_refill_memcache(pkvm_vcpu);
 
-		/*
-		 * May need to allocate additional pages for guest page table
-		 * in order to split a huge mapping into smaller ones. Assume
-		 * the worst case.
-		 */
-		min_pages = __pkvm_pgtable_max_pages(a1 >> PAGE_SHIFT);
-		if (vcpu->arch.pkvm.guest_mmu_memcache.count < min_pages) {
+		if (nr == PKVM_GHC_SHARE_MEM)
+			ret = pkvm_guest_share_host(vcpu, a0, a1, &min_pages);
+		else
+			ret = pkvm_guest_unshare_host(vcpu, a0, a1, &min_pages);
+		if (ret == -E2BIG) {
 			/*
 			 * If not enough pages in the memcache, forward request
 			 * to the host for refilling the memcache with the needed
@@ -15253,11 +15317,6 @@ int pkvm_emulate_hypercall(struct kvm_vcpu *vcpu)
 			pkvm_vcpu->shared_vcpu->arch.pkvm.req_param = min_pages;
 			return 0;
 		}
-
-		ret = pkvm_guest_share_host(vcpu, a0, a1);
-		break;
-	case PKVM_GHC_UNSHARE_MEM:
-		ret = pkvm_guest_unshare_host(vcpu, a0, a1);
 		break;
 	case PKVM_GHC_IOREAD:
 	case PKVM_GHC_IOWRITE:

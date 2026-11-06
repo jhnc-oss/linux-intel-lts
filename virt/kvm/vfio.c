@@ -38,7 +38,7 @@ struct kvm_vfio {
 
 #ifdef CONFIG_VFIO_PKVM_IOMMU
 struct kvm_pviommu {
-	struct kvm_device *dev;
+	struct kvm *kvm;
 	int fd;
 };
 #endif
@@ -192,13 +192,17 @@ static int kvm_vfio_assign_file(struct file *file)
 {
 	struct device *dev;
 	struct iommu_group *group;
+	int ret;
 
 	dev = kvm_vfio_file_get_device(file);
 	if (dev)
 		return kvm_arch_assign_device(dev);
 	group = kvm_vfio_file_iommu_group(file);
-	if (group)
-		return kvm_arch_assign_group(group);
+	if (group) {
+		ret = kvm_arch_assign_group(group);
+		iommu_group_put(group);
+		return ret;
+	}
 
 	return -ENODEV;
 }
@@ -214,8 +218,10 @@ static void kvm_vfio_reclaim_file(struct file *file)
 		return;
 	}
 	group = kvm_vfio_file_iommu_group(file);
-	if (group)
+	if (group) {
 		kvm_arch_reclaim_group(group);
+		iommu_group_put(group);
+	}
 }
 
 static int kvm_vfio_file_add(struct kvm_device *dev, unsigned int fd)
@@ -251,8 +257,10 @@ static int kvm_vfio_file_add(struct kvm_device *dev, unsigned int fd)
 	}
 
 	ret = kvm_vfio_assign_file(filp);
-	if (ret)
+	if (ret) {
+		kfree(kvf);
 		goto out_unlock;
+	}
 
 	kvf->file = get_file(filp);
 	list_add_tail(&kvf->node, &kv->file_list);
@@ -397,7 +405,7 @@ static int kvm_vfio_pviommu_set_config(struct file *fiommu, struct kvm_vfio_iomm
 	if (ret)
 		goto err_fput;
 
-	ret = kvm_call_hyp_nvhe(__pkvm_pviommu_add_vsid, pviommu->dev->kvm, pviommu->fd,
+	ret = kvm_call_hyp_nvhe(__pkvm_pviommu_add_vsid, pviommu->kvm, pviommu->fd,
 				iommu, phys_sid, config->vsid);
 
 err_fput:
@@ -431,6 +439,7 @@ static int pviommufd_release(struct inode *i, struct file *filp)
 {
 	struct kvm_pviommu *pviommu = filp->private_data;
 
+	kvm_put_kvm(pviommu->kvm);
 	kfree(pviommu);
 	return 0;
 }
@@ -451,12 +460,14 @@ static int kvm_vfio_pviommu_attach(struct kvm_device *dev)
 	if (!pviommu)
 		return -ENOMEM;
 
-	pviommu->dev = dev;
+	pviommu->kvm = dev->kvm;
 
+	kvm_get_kvm(dev->kvm);
 	filep = anon_inode_getfile("kvm-pviommu", &pviommu_fops, pviommu, O_CLOEXEC);
 	if (IS_ERR(filep)) {
-		ret = PTR_ERR(filep);
-		goto out_free;
+		kvm_put_kvm(dev->kvm);
+		kfree(pviommu);
+		return PTR_ERR(filep);
 	}
 
 	fdno = get_unused_fd_flags(O_CLOEXEC);
@@ -472,13 +483,11 @@ static int kvm_vfio_pviommu_attach(struct kvm_device *dev)
 
 	pviommu->fd = fdno;
 	fd_install(fdno, filep);
-	return pviommu->fd;
+	return fdno;
 out_err:
 	put_unused_fd(fdno);
 out_fput:
 	fput(filep);
-out_free:
-	kfree(pviommu);
 	return ret;
 }
 
@@ -531,7 +540,7 @@ static int kvm_vfio_pviommu(struct kvm_device *dev, long attr,
 		ret = kvm_vfio_pviommu_get_info(dev, &info);
 		if (ret)
 			return ret;
-		return copy_to_user(arg, &info, usize);
+		return copy_struct_to_user(arg, usize, &info, sizeof(info), NULL);
 	}
 	return -ENXIO;
 }

@@ -27,7 +27,7 @@
 #define kvm_call_hyp_nvhe_elem(res, gfp, ret, ...)					\
 ({											\
 	struct kvm_hyp_req __req;							\
-	int __num_elems;								\
+	size_t __num_elems;								\
 	ret = 0;									\
 	res = kvm_call_hyp_nvhe_smccc(__VA_ARGS__);					\
 	__num_elems = res.a1;								\
@@ -79,6 +79,13 @@ int kvm_iommu_register_hyp_ops(struct kvm_iommu_ops *hyp_ops, pkvm_handle_t *drv
 	return ret;
 }
 EXPORT_SYMBOL(kvm_iommu_register_hyp_ops);
+
+int kvm_iommu_init_atomic_pool(struct kvm_hyp_memcache *atomic_mc)
+{
+	return kvm_call_hyp_nvhe(__pkvm_iommu_init_atomic_pool,
+				 atomic_mc->head, atomic_mc->nr_pages);
+}
+EXPORT_SYMBOL(kvm_iommu_init_atomic_pool);
 
 int kvm_iommu_init_driver(void)
 {
@@ -292,6 +299,14 @@ int kvm_iommu_nested_cfg_sync(pkvm_handle_t drv_id, pkvm_handle_t iommu_id, void
 }
 EXPORT_SYMBOL(kvm_iommu_nested_cfg_sync);
 
+int kvm_iommu_page_response(pkvm_handle_t drv_id, pkvm_handle_t iommu_id, unsigned int endpoint,
+			    unsigned int pasid, unsigned int grpid, unsigned int status_code)
+{
+	return kvm_call_hyp_nvhe(__pkvm_host_iommu_page_response, drv_id, iommu_id, endpoint, pasid,
+				 grpid, status_code);
+}
+EXPORT_SYMBOL(kvm_iommu_page_response);
+
 int pkvm_iommu_suspend(int device_id)
 {
 	return kvm_call_hyp_nvhe(__pkvm_host_hvc_pd, device_id, 0);
@@ -305,10 +320,10 @@ int pkvm_iommu_resume(int device_id)
 EXPORT_SYMBOL(pkvm_iommu_resume);
 
 int kvm_iommu_set_identity(pkvm_handle_t drv_id, pkvm_handle_t iommu,
-			   pkvm_handle_t dev, bool on)
+			   pkvm_handle_t dev, bool on, unsigned long flags)
 {
 	return kvm_call_hyp_nvhe_mc(__pkvm_host_iommu_set_identity, drv_id,
-				    iommu, dev, on);
+				    iommu, dev, on, flags);
 }
 EXPORT_SYMBOL(kvm_iommu_set_identity);
 

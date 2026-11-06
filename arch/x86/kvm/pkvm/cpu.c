@@ -22,6 +22,7 @@ DEFINE_PER_CPU(u64, x86_spec_ctrl_current);
 DEFINE_STATIC_KEY_FALSE(switch_vcpu_ibpb);
 u64 x86_pred_cmd = PRED_CMD_IBPB;
 unsigned int tsc_khz;
+bool msi_dest_mode_logical;
 
 /*
  * Used to switch the FPU state between the host VM and pVMs. The fpu struct is
@@ -47,26 +48,30 @@ unsigned int pkvm_per_cpu_nr_pages(void)
 #endif
 }
 
-int pkvm_setup_per_cpu(int cpu, unsigned long base)
+int pkvm_setup_per_cpu(int cpu, unsigned long base,
+		       unsigned long pcpu_pa, unsigned long vcpu_pa)
 {
+	struct pkvm_pcpu *pcpu = __pkvm_va(pcpu_pa);
+	struct kvm_vcpu *vcpu = __pkvm_va(vcpu_pa);
 	struct task_struct *task;
-	struct pkvm_pcpu *pcpu;
-	struct kvm_vcpu *vcpu;
 
 	if (cpu >= ARRAY_SIZE(__per_cpu_offset))
 		return -EINVAL;
-	pcpu = pkvm_hyp->pcpus[cpu];
-	if (!pcpu)
+	if (pcpu->cpu != cpu)
 		return -EINVAL;
-	vcpu = pkvm_hyp->host_vcpus[cpu];
-	if (!vcpu)
+	if (vcpu->cpu != cpu)
 		return -EINVAL;
 
 #ifndef CONFIG_PKVM_X86_DEBUG
 	__per_cpu_offset[cpu] = (unsigned long)__pkvm_va(base) -
 				(unsigned long)__per_cpu_start;
 #else
-	__per_cpu_offset[cpu] = (unsigned long)__pkvm_va(base);
+	/*
+	 * In debug mode, base is a virtual address offset used by the host
+	 * kernel (which may be either direct map or vmalloc), not a physical
+	 * address.
+	 */
+	__per_cpu_offset[cpu] = (unsigned long)base;
 #endif
 	per_cpu(this_cpu_off, cpu) = __per_cpu_offset[cpu];
 	per_cpu(cpu_number, cpu) = cpu;

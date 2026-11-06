@@ -56,6 +56,16 @@ int __init pkvm_host_prepare_iommu(void)
 			goto out;
 		}
 
+		/* pKVM requires x2APIC and expects EIM and IR support */
+		if (!ecap_eim_support(iommu->ecap)) {
+			pr_warn("iommu%d: Extended Interrupt mode not supported!\n", iommu->seq_id);
+			goto out;
+		}
+		if (!ecap_ir_support(iommu->ecap)) {
+			pr_warn("iommu%d: Interrupt Remapping not supported!\n", iommu->seq_id);
+			goto out;
+		}
+
 		if (cap_sagaw(iommu->cap) & IOMMU_PGT_4LEVEL)
 			pglvl_mask |= IOMMU_PGT_4LEVEL;
 		if (cap_sagaw(iommu->cap) & IOMMU_PGT_5LEVEL)
@@ -129,7 +139,6 @@ int pkvm_context_clear(u64 phys, u8 bus, u8 devfn, struct device_domain_info *in
 	data->bus = bus;
 	data->devfn = devfn;
 	data->ats_qdep = info->ats_qdep;
-	data->ats_supported = info->ats_supported;
 
 	return pkvm_hypercall_in(iommu_clear_ce, &d);
 }
@@ -146,8 +155,8 @@ int pkvm_context_mapping(struct intel_iommu *iommu, struct device_domain_info *i
 	data->did = did;
 	data->bus = bus;
 	data->devfn = devfn;
-	data->ats_qdep = info->ats_qdep;
-	data->ats_supported = info->ats_supported;
+	data->ats_qdep = info ? info->ats_qdep : 0;
+	data->ats_supported = info ? info->ats_supported : 0;
 
 	spin_lock(&iommu->lock);
 	ret = pkvm_hypercall_inout(iommu_set_lm_ce, &d, &d);
@@ -214,7 +223,7 @@ int pkvm_pasid_table_setup(struct intel_iommu *iommu, struct device_domain_info 
 }
 
 int pkvm_pasid_setup_fl(struct device_domain_info *info, phys_addr_t fsptptr,
-		      u32 pasid, u16 did, u16 old_did, int flags)
+		      u32 pasid, u16 did, int flags)
 {
 	union pkvm_hc_data d = { 0 };
 	struct pasid_setup_fl_data *data = &d.iommu_pasid_setup_fl.in;
@@ -224,13 +233,11 @@ int pkvm_pasid_setup_fl(struct device_domain_info *info, phys_addr_t fsptptr,
 	data->phys = iommu->reg_phys;
 	data->fsptptr_gpa = fsptptr;
 	data->pasid = pasid;
-	data->flags = flags;
+	data->force_snoop = !!(flags & PASID_FLAG_PAGE_SNOOP);
 	data->did = did;
-	data->old_did = old_did;
 	data->bus = info->bus;
 	data->devfn = info->devfn;
 	data->ats_qdep = info->ats_qdep;
-	data->ats_supported = info->ats_supported;
 
 	spin_lock(&iommu->lock);
 	ret = pkvm_hypercall_inout(iommu_pasid_setup_fl, &d, &d);
@@ -254,7 +261,7 @@ int pkvm_pasid_setup_fl(struct device_domain_info *info, phys_addr_t fsptptr,
 }
 
 int pkvm_pasid_setup_sl(struct device_domain_info *info, phys_addr_t ssptptr,
-			u32 pasid, u16 did, u16 old_did)
+			u32 pasid, u16 did)
 {
 	union pkvm_hc_data d = { 0 };
 	struct pasid_setup_sl_data *data = &d.iommu_pasid_setup_sl.in;
@@ -265,11 +272,9 @@ int pkvm_pasid_setup_sl(struct device_domain_info *info, phys_addr_t ssptptr,
 	data->ssptptr_gpa = ssptptr;
 	data->pasid = pasid;
 	data->did = did;
-	data->old_did = old_did;
 	data->bus = info->bus;
 	data->devfn = info->devfn;
 	data->ats_qdep = info->ats_qdep;
-	data->ats_supported = info->ats_supported;
 
 	spin_lock(&iommu->lock);
 	ret = pkvm_hypercall_inout(iommu_pasid_setup_sl, &d, &d);
@@ -303,7 +308,6 @@ int pkvm_pasid_teardown(struct device_domain_info *info, u32 pasid)
 	data->bus = info->bus;
 	data->devfn = info->devfn;
 	data->ats_qdep = info->ats_qdep;
-	data->ats_supported = info->ats_supported;
 
 	return pkvm_hypercall_in(iommu_pasid_teardown, &d);
 }
@@ -378,11 +382,12 @@ int pkvm_domain_map(struct dmar_domain *domain, unsigned long iov_pfn,
 	struct domain_map_data *data = &d.iommu_domain_map.in;
 	int ret;
 
-	data->pgd_gpa = virt_to_phys(domain->pgd),
-	data->iov_pfn = iov_pfn,
-	data->phys_pfn = phys_pfn,
-	data->nr_pages = nr_pages,
-	data->prot = prot,
+	data->pgd_gpa = virt_to_phys(domain->pgd);
+	data->iov_pfn = iov_pfn;
+	data->phys_pfn = phys_pfn;
+	data->nr_pages = nr_pages;
+	data->prot = prot;
+	data->mc.flags = PKVM_MC_DONATE_SHARE_RO;
 
 	ret = pkvm_hypercall_inout(iommu_domain_map, &d, &d);
 	if (ret == -ENOMEM) {
@@ -422,5 +427,36 @@ int pkvm_domain_unmap(struct dmar_domain *domain, unsigned long start_pfn, unsig
 	if (ret)
 		pr_err("%s: domain unmap[start_pfn: %lx, last_pfn: %lx] failed (err=%d)\n",
 		       __func__, start_pfn, last_pfn, ret);
+	return ret;
+}
+
+int pkvm_modify_irte(struct intel_iommu *iommu, int index, struct irte *irte_modified)
+{
+	union pkvm_hc_data d = { 0 };
+	struct modify_irte_data *data = &d.iommu_modify_irte.data;
+	int ret;
+
+	data->phys    = iommu->reg_phys;
+	data->index   = index;
+	data->irte_lo = irte_modified->low;
+	data->irte_hi = irte_modified->high;
+
+	ret = pkvm_hypercall_in(iommu_modify_irte, &d);
+	if (ret)
+		pr_err("iommu%d: modify_irte index=%d failed (err=%d)\n",
+		       iommu->seq_id, index, ret);
+	return ret;
+}
+
+int pkvm_write_iommu_msi(struct intel_iommu *iommu, u32 offset,
+			 u32 data, u32 addr, u32 uaddr)
+{
+	int ret = pkvm_hypercall(iommu_msi_write, iommu->reg_phys, offset,
+				 data, addr, uaddr);
+
+	if (ret) {
+		pr_err("iommu%d: DMAR MSI message write failed (err=%d)\n",
+		       iommu->seq_id, ret);
+	}
 	return ret;
 }

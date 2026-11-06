@@ -404,6 +404,7 @@ struct fuse_args {
 	bool is_ext:1;
 	bool is_pinned:1;
 	bool invalidate_vmap:1;
+	bool abort_on_kill:1;
 	struct fuse_in_arg in_args[FUSE_MAX_IN_ARGS];
 	struct fuse_arg out_args[FUSE_MAX_OUT_ARGS];
 	void (*end)(struct fuse_mount *fm, struct fuse_args *args, int error);
@@ -477,6 +478,8 @@ struct fuse_io_priv {
  * FR_PRIVATE:		request is on private list
  * FR_ASYNC:		request is asynchronous
  * FR_URING:		request is handled through fuse-io-uring
+ * FR_SYNC_WAKEUP:	use synchronous wakeup when queueing this request to
+ *			give the scheduler a hint about the waker task
  */
 enum fuse_req_flag {
 	FR_ISREPLY,
@@ -492,6 +495,7 @@ enum fuse_req_flag {
 	FR_PRIVATE,
 	FR_ASYNC,
 	FR_URING,
+	FR_SYNC_WAKEUP,
 };
 
 /**
@@ -1688,6 +1692,7 @@ ssize_t fuse_passthrough_splice_write(struct pipe_inode_info *pipe,
 				      struct file *out, loff_t *ppos,
 				      size_t len, unsigned int flags);
 ssize_t fuse_passthrough_mmap(struct file *file, struct vm_area_struct *vma);
+int fuse_passthrough_fadvise(struct fuse_file *ff, loff_t offset, loff_t len, int advice);
 
 #ifdef CONFIG_SYSCTL
 extern int fuse_sysctl_register(void);

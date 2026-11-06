@@ -54,6 +54,7 @@
 struct madvise_walk_private {
 	struct mmu_gather *tlb;
 	bool pageout;
+	void *private;
 };
 
 enum madvise_lock_mode {
@@ -173,7 +174,7 @@ static int madvise_update_vma(vm_flags_t new_flags,
 			range->start, range->end, anon_name);
 	else
 		vma = vma_modify_flags(&vmi, madv_behavior->prev, vma,
-			range->start, range->end, new_flags);
+			range->start, range->end, &new_flags);
 
 	if (IS_ERR(vma))
 		return PTR_ERR(vma);
@@ -345,8 +346,7 @@ static inline bool can_do_file_pageout(struct vm_area_struct *vma)
 	 * otherwise we'd be including shared non-exclusive mappings, which
 	 * opens a side channel.
 	 */
-	return inode_owner_or_capable(&nop_mnt_idmap,
-				      file_inode(vma->vm_file)) ||
+	return file_owner_or_capable(vma->vm_file) ||
 	       file_permission(vma->vm_file, MAY_WRITE) == 0;
 }
 
@@ -457,7 +457,7 @@ static int madvise_cold_or_pageout_pte_range(pmd_t *pmd,
 huge_unlock:
 		spin_unlock(ptl);
 		if (pageout)
-			reclaim_pages(&folio_list);
+			__reclaim_pages(&folio_list, private->private);
 		return 0;
 	}
 
@@ -580,7 +580,7 @@ restart:
 		pte_unmap_unlock(start_pte, ptl);
 	}
 	if (pageout)
-		reclaim_pages(&folio_list);
+		__reclaim_pages(&folio_list, private->private);
 	cond_resched();
 
 	return 0;
@@ -638,11 +638,18 @@ static int madvise_pageout_page_range(struct mmu_gather *tlb,
 		.tlb = tlb,
 	};
 	int ret;
+	LIST_HEAD(folio_list);
+
+	trace_android_rvh_madvise_pageout_begin(&walk_private.private);
 
 	tlb_start_vma(tlb, vma);
 	ret = walk_page_range_vma(vma, range->start, range->end, &cold_walk_ops,
 			    &walk_private);
 	tlb_end_vma(tlb, vma);
+
+	trace_android_rvh_madvise_pageout_end(walk_private.private, &folio_list);
+	if (!list_empty(&folio_list))
+		reclaim_pages(&folio_list);
 
 	return ret;
 }
@@ -1170,15 +1177,21 @@ static long madvise_guard_install(struct madvise_behavior *madv_behavior)
 		return -EINVAL;
 
 	/*
-	 * If we install guard markers, then the range is no longer
-	 * empty from a page table perspective and therefore it's
-	 * appropriate to have an anon_vma.
-	 *
-	 * This ensures that on fork, we copy page tables correctly.
+	 * Set atomically under read lock. All pertinent readers will need to
+	 * acquire an mmap/VMA write lock to read it. All remaining readers may
+	 * or may not see the flag set, but we don't care.
 	 */
-	err = anon_vma_prepare(vma);
-	if (err)
-		return err;
+	vma_flag_set_atomic(vma, VM_MAYBE_GUARD_BIT);
+
+	/*
+	 * If anonymous and we are establishing page tables the VMA ought to
+	 * have an anon_vma associated with it.
+	 */
+	if (vma_is_anonymous(vma)) {
+		err = anon_vma_prepare(vma);
+		if (err)
+			return err;
+	}
 
 	/*
 	 * Optimistically try to install the guard marker pages first. If any

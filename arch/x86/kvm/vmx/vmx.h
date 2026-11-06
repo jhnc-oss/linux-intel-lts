@@ -295,7 +295,7 @@ struct vcpu_vmx {
 	struct {
 		int vm86_active;
 		ulong save_rflags;
-		struct kvm_segment segs[8];
+		struct kvm_segment segs[NR_VCPU_SEGMENTS];
 	} rmode;
 	struct {
 		u32 bitmask; /* 4 bits per segment (1 bit per field) */
@@ -304,7 +304,7 @@ struct vcpu_vmx {
 			unsigned long base;
 			u32 limit;
 			u32 ar;
-		} seg[8];
+		} seg[NR_VCPU_SEGMENTS];
 	} segment_cache;
 	int vpid;
 
@@ -358,6 +358,9 @@ struct kvm_vmx {
 	gpa_t ept_identity_map_addr;
 	/* Posted Interrupt Descriptor (PID) table for IPI virtualization */
 	u64 *pid_table;
+#ifdef CONFIG_PKVM_INTEL
+	unsigned long *io_bitmap;
+#endif
 };
 
 static __always_inline struct vcpu_vt *to_vt(struct kvm_vcpu *vcpu)
@@ -850,13 +853,14 @@ void vmx_clear_hlt(struct kvm_vcpu *vcpu);
 #ifdef CONFIG_PKVM_INTEL
 
 #define PKVM_HOST_KVM_VMX_PAGES		(PAGE_ALIGN(sizeof(struct kvm_vmx)) >> PAGE_SHIFT)
+#define PKVM_HOST_KVM_EXTRA_PAGES	2 /* io_bitmap */
 #define PKVM_HOST_VCPU_VMX_PAGES	(PAGE_ALIGN(sizeof(struct vcpu_vmx)) >> PAGE_SHIFT)
-#define PKVM_VMX_PAGES			3 /* vmxarea+vmcs+msr_bitmap */
+#define PKVM_HOST_VCPU_EXTRA_PAGES	3 /* vmxarea+vmcs+msr_bitmap */
 
 static inline unsigned long pkvm_vmx_data_pages(void)
 {
-	return pkvm_data_pages(PKVM_HOST_KVM_VMX_PAGES,
-			       PKVM_HOST_VCPU_VMX_PAGES + PKVM_VMX_PAGES);
+	return pkvm_data_pages(PKVM_HOST_KVM_VMX_PAGES + PKVM_HOST_KVM_EXTRA_PAGES,
+			       PKVM_HOST_VCPU_VMX_PAGES + PKVM_HOST_VCPU_EXTRA_PAGES);
 }
 
 int __init vmx_pkvm_init(void);

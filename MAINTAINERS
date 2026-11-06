@@ -4671,6 +4671,7 @@ F:	net/sched/act_bpf.c
 F:	net/sched/cls_bpf.c
 F:	samples/bpf/
 F:	scripts/bpf_doc.py
+F:	scripts/gen-btf.sh
 F:	scripts/Makefile.btf
 F:	scripts/pahole-version.sh
 F:	tools/bpf/
@@ -9458,7 +9459,7 @@ S:	Maintained
 W:	https://f2fs.wiki.kernel.org/
 Q:	https://patchwork.kernel.org/project/f2fs/list/
 B:	https://bugzilla.kernel.org/enter_bug.cgi?product=File%20System&component=f2fs
-T:	git git://git.kernel.org/pub/scm/linux/kernel/git/jaegeuk/f2fs.git
+T:	git git://git.kernel.org/pub/scm/linux/kernel/git/jaegeuk/f2fs.git dev
 F:	Documentation/ABI/testing/sysfs-fs-f2fs
 F:	Documentation/filesystems/f2fs.rst
 F:	fs/f2fs/
@@ -13845,7 +13846,7 @@ S:	Maintained
 F:	Documentation/admin-guide/mm/kho.rst
 F:	Documentation/core-api/kho/*
 F:	include/linux/kexec_handover.h
-F:	kernel/kexec_handover.c
+F:	kernel/kexec_handover*
 F:	lib/test_kho.c
 F:	tools/testing/selftests/kho/
 
@@ -14595,6 +14596,7 @@ F:	rust/helpers/mutex.c
 F:	rust/helpers/spinlock.c
 F:	rust/kernel/sync/lock.rs
 F:	rust/kernel/sync/lock/
+F:	rust/kernel/sync/lockdep.rs
 F:	rust/kernel/sync/locked_by.rs
 X:	kernel/locking/locktorture.c
 
@@ -14664,7 +14666,6 @@ M:	Qunqin Zhao <zhaoqunqin@loongson.cn>
 L:	linux-crypto@vger.kernel.org
 S:	Maintained
 F:	drivers/char/tpm/tpm_loongson.c
-F:	drivers/crypto/loongson/
 F:	drivers/mfd/loongson-se.c
 F:	include/linux/mfd/loongson-se.h
 
@@ -14928,7 +14929,7 @@ T:	git git://git.kernel.org/pub/scm/linux/kernel/git/wireless/wireless.git
 T:	git git://git.kernel.org/pub/scm/linux/kernel/git/wireless/wireless-next.git
 F:	Documentation/networking/mac80211-injection.rst
 F:	Documentation/networking/mac80211_hwsim/mac80211_hwsim.rst
-F:	drivers/net/wireless/virtual/mac80211_hwsim.[ch]
+F:	drivers/net/wireless/virtual/mac80211_hwsim*.[ch]
 F:	include/net/mac80211.h
 F:	net/mac80211/
 
@@ -18060,6 +18061,8 @@ F:	include/uapi/linux/sctp.h
 F:	lib/net_utils.c
 F:	lib/random32.c
 F:	net/
+F:	rust/helpers/net/
+F:	rust/kernel/net/
 F:	samples/pktgen/
 F:	tools/net/
 F:	tools/testing/selftests/net/

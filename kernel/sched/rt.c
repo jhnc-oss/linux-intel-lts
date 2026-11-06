@@ -1545,6 +1545,11 @@ bool cpu_busy_with_softirqs(int cpu)
 	return softirqs & LONG_SOFTIRQ_MASK;
 }
 EXPORT_SYMBOL_GPL(cpu_busy_with_softirqs);
+
+bool local_rt_runnable(void)
+{
+	return sched_rt_runnable(this_rq());
+}
 #endif /* CONFIG_RT_SOFTIRQ_AWARE_SCHED */
 
 static bool rt_task_fits_cpu(struct task_struct *p, int cpu)
@@ -1965,7 +1970,8 @@ static struct task_struct *pick_next_pushable_task(struct rq *rq)
 		return NULL;
 
 	plist_for_each_entry(p, head, pushable_tasks) {
-		if (task_is_pushable(rq, p, 0)) {
+		/* skip tasks that cannot be migrated */
+		if (task_is_pushable(rq, p, 0) && !is_migration_disabled(p)) {
 			push_task = p;
 			break;
 		}
@@ -2844,7 +2850,7 @@ static int tg_rt_schedulable(struct task_group *tg, void *data)
 {
 	struct rt_schedulable_data *d = data;
 	struct task_group *child;
-	unsigned long total, sum = 0;
+	u64 total, sum = 0;
 	u64 period, runtime;
 
 	period = ktime_to_ns(tg->rt_bandwidth.rt_period);
@@ -2866,9 +2872,6 @@ static int tg_rt_schedulable(struct task_group *tg, void *data)
 	 */
 	if (rt_bandwidth_enabled() && !runtime &&
 	    tg->rt_bandwidth.rt_runtime && tg_has_rt_tasks(tg))
-		return -EBUSY;
-
-	if (WARN_ON(!rt_group_sched_enabled() && tg != &root_task_group))
 		return -EBUSY;
 
 	total = to_ratio(period, runtime);
@@ -3014,6 +3017,8 @@ long sched_group_rt_period(struct task_group *tg)
 static int sched_rt_global_constraints(void)
 {
 	int ret = 0;
+	if (!rt_group_sched_enabled())
+		return ret;
 
 	mutex_lock(&rt_constraints_mutex);
 	ret = __rt_schedulable(NULL, 0, 0);

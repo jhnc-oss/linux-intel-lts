@@ -688,12 +688,14 @@ struct dm_table *dm_get_live_table(struct mapped_device *md,
 
 	return srcu_dereference(md->map, &md->io_barrier);
 }
+EXPORT_SYMBOL_GPL(dm_get_live_table);
 
 void dm_put_live_table(struct mapped_device *md,
 		       int srcu_idx) __releases(md->io_barrier)
 {
 	srcu_read_unlock(&md->io_barrier, srcu_idx);
 }
+EXPORT_SYMBOL_GPL(dm_put_live_table);
 
 void dm_sync_table(struct mapped_device *md)
 {
@@ -2362,7 +2364,8 @@ static struct mapped_device *alloc_dev(int minor)
 
 	format_dev_t(md->name, MKDEV(_major, minor));
 
-	md->wq = alloc_workqueue("kdmflush/%s", WQ_MEM_RECLAIM, 0, md->name);
+	md->wq = alloc_workqueue("kdmflush/%s", WQ_MEM_RECLAIM | WQ_PERCPU, 0,
+				 md->name);
 	if (!md->wq)
 		goto bad;
 

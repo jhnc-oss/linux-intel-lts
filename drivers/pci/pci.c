@@ -32,6 +32,13 @@
 #include <linux/bitfield.h>
 #include "pci.h"
 
+#undef CREATE_TRACE_POINTS
+#include <trace/hooks/pci.h>
+
+#include <linux/android_kabi.h>
+ANDROID_KABI_DECLONLY(static_call_mod);
+ANDROID_KABI_DECLONLY(trace_eval_map);
+
 DEFINE_MUTEX(pci_slot_mutex);
 
 const char *pci_power_names[] = {
@@ -1067,27 +1074,45 @@ static void pci_restore_bars(struct pci_dev *dev)
 
 static inline bool platform_pci_power_manageable(struct pci_dev *dev)
 {
-	if (pci_use_mid_pm())
-		return true;
+	bool ret;
 
-	return acpi_pci_power_manageable(dev);
+	if (pci_use_mid_pm())
+		ret = true;
+	else
+		ret = acpi_pci_power_manageable(dev);
+
+	trace_android_vh_platform_pci_power_manageable(dev, &ret);
+
+	return ret;
 }
 
 static inline int platform_pci_set_power_state(struct pci_dev *dev,
 					       pci_power_t t)
 {
-	if (pci_use_mid_pm())
-		return mid_pci_set_power_state(dev, t);
+	int ret;
 
-	return acpi_pci_set_power_state(dev, t);
+	if (pci_use_mid_pm())
+		ret = mid_pci_set_power_state(dev, t);
+	else
+		ret = acpi_pci_set_power_state(dev, t);
+
+	trace_android_vh_platform_pci_set_power_state(dev, t, &ret);
+
+	return ret;
 }
 
 static inline pci_power_t platform_pci_get_power_state(struct pci_dev *dev)
 {
-	if (pci_use_mid_pm())
-		return mid_pci_get_power_state(dev);
+	pci_power_t state;
 
-	return acpi_pci_get_power_state(dev);
+	if (pci_use_mid_pm())
+		state = mid_pci_get_power_state(dev);
+	else
+		state = acpi_pci_get_power_state(dev);
+
+	trace_android_vh_platform_pci_get_power_state(dev, &state);
+
+	return state;
 }
 
 static inline void platform_pci_refresh_power_state(struct pci_dev *dev)
@@ -1098,10 +1123,16 @@ static inline void platform_pci_refresh_power_state(struct pci_dev *dev)
 
 static inline pci_power_t platform_pci_choose_state(struct pci_dev *dev)
 {
-	if (pci_use_mid_pm())
-		return PCI_POWER_ERROR;
+	pci_power_t state;
 
-	return acpi_pci_choose_state(dev);
+	if (pci_use_mid_pm())
+		state = PCI_POWER_ERROR;
+	else
+		state = acpi_pci_choose_state(dev);
+
+	trace_android_vh_platform_pci_choose_state(dev, &state);
+
+	return state;
 }
 
 static inline int platform_pci_set_wakeup(struct pci_dev *dev, bool enable)
@@ -2272,10 +2303,9 @@ EXPORT_SYMBOL_GPL(pci_set_pcie_reset_state);
 #ifdef CONFIG_PCIEAER
 void pcie_clear_device_status(struct pci_dev *dev)
 {
-	u16 sta;
-
-	pcie_capability_read_word(dev, PCI_EXP_DEVSTA, &sta);
-	pcie_capability_write_word(dev, PCI_EXP_DEVSTA, sta);
+	pcie_capability_write_word(dev, PCI_EXP_DEVSTA,
+				   PCI_EXP_DEVSTA_CED | PCI_EXP_DEVSTA_NFED |
+				   PCI_EXP_DEVSTA_FED | PCI_EXP_DEVSTA_URD);
 }
 #endif
 
@@ -3819,8 +3849,7 @@ int pci_rebar_set_size(struct pci_dev *pdev, int bar, int size)
  */
 int pci_enable_atomic_ops_to_root(struct pci_dev *dev, u32 cap_mask)
 {
-	struct pci_bus *bus = dev->bus;
-	struct pci_dev *bridge;
+	struct pci_dev *root, *bridge;
 	u32 cap, ctl2;
 
 	/*
@@ -3850,35 +3879,35 @@ int pci_enable_atomic_ops_to_root(struct pci_dev *dev, u32 cap_mask)
 		return -EINVAL;
 	}
 
-	while (bus->parent) {
-		bridge = bus->self;
+	root = pcie_find_root_port(dev);
+	if (!root)
+		return -EINVAL;
 
-		pcie_capability_read_dword(bridge, PCI_EXP_DEVCAP2, &cap);
+	pcie_capability_read_dword(root, PCI_EXP_DEVCAP2, &cap);
+	if ((cap & cap_mask) != cap_mask)
+		return -EINVAL;
 
+	bridge = pci_upstream_bridge(dev);
+	while (bridge != root) {
 		switch (pci_pcie_type(bridge)) {
-		/* Ensure switch ports support AtomicOp routing */
 		case PCI_EXP_TYPE_UPSTREAM:
-		case PCI_EXP_TYPE_DOWNSTREAM:
-			if (!(cap & PCI_EXP_DEVCAP2_ATOMIC_ROUTE))
-				return -EINVAL;
-			break;
-
-		/* Ensure root port supports all the sizes we care about */
-		case PCI_EXP_TYPE_ROOT_PORT:
-			if ((cap & cap_mask) != cap_mask)
-				return -EINVAL;
-			break;
-		}
-
-		/* Ensure upstream ports don't block AtomicOps on egress */
-		if (pci_pcie_type(bridge) == PCI_EXP_TYPE_UPSTREAM) {
+			/* Upstream ports must not block AtomicOps on egress */
 			pcie_capability_read_dword(bridge, PCI_EXP_DEVCTL2,
 						   &ctl2);
 			if (ctl2 & PCI_EXP_DEVCTL2_ATOMIC_EGRESS_BLOCK)
 				return -EINVAL;
+			fallthrough;
+
+		/* All switch ports need to route AtomicOps */
+		case PCI_EXP_TYPE_DOWNSTREAM:
+			pcie_capability_read_dword(bridge, PCI_EXP_DEVCAP2,
+						   &cap);
+			if (!(cap & PCI_EXP_DEVCAP2_ATOMIC_ROUTE))
+				return -EINVAL;
+			break;
 		}
 
-		bus = bus->parent;
+		bridge = pci_upstream_bridge(bridge);
 	}
 
 	pcie_capability_set_word(dev, PCI_EXP_DEVCTL2,
@@ -4922,6 +4951,19 @@ void pci_reset_secondary_bus(struct pci_dev *dev)
 
 void __weak pcibios_reset_secondary_bus(struct pci_dev *dev)
 {
+	struct pci_host_bridge *host = pci_find_host_bridge(dev->bus);
+	int ret;
+
+	if (pci_is_root_bus(dev->bus) && host->reset_root_port) {
+		ret = host->reset_root_port(host, dev);
+		if (ret)
+			pci_err(dev, "Failed to reset Root Port: %d\n", ret);
+		else
+			pci_restore_state(dev);
+
+		return;
+	}
+
 	pci_reset_secondary_bus(dev);
 }
 
@@ -5715,6 +5757,7 @@ bus_reset:
 	mutex_unlock(&pci_slot_mutex);
 	return pci_bus_reset(bridge->subordinate, PCI_RESET_DO_RESET);
 }
+EXPORT_SYMBOL_GPL(pci_bus_error_reset);
 
 /**
  * pci_probe_reset_bus - probe whether a PCI bus can be reset

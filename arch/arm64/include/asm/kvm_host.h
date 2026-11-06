@@ -413,6 +413,8 @@ struct kvm_arch {
 #define KVM_ARCH_FLAG_WRITABLE_IMP_ID_REGS		10
 	/* Guest has bought into the MMIO guard extension */
 #define KVM_ARCH_FLAG_MMIO_GUARD			11
+	/* No further ID register changes possible */
+#define KVM_ARCH_FLAG_ID_REGS_FINAL			12
 	unsigned long flags;
 
 	/* VM-wide vCPU feature set */
@@ -775,6 +777,7 @@ struct kvm_host_data {
 #define KVM_HOST_DATA_FLAG_VCPU_IN_HYP_CONTEXT		6
 #define KVM_HOST_DATA_FLAG_L1_VNCR_MAPPED		7
 #define KVM_HOST_DATA_FLAG_HAS_BRBE			8
+#define KVM_HOST_DATA_FLAG_PKVM_LATE_CPU		9
 	unsigned long flags;
 
 	struct kvm_cpu_context host_ctxt;
@@ -1332,6 +1335,9 @@ struct kvm_vcpu_arch {
 #define vcpu_has_ptrauth(vcpu)		false
 #endif
 
+#define kvm_id_regs_final(kvm)						\
+	test_bit(KVM_ARCH_FLAG_ID_REGS_FINAL, &(kvm)->arch.flags)
+
 #define vcpu_on_unsupported_cpu(vcpu)					\
 	vcpu_get_flag(vcpu, ON_UNSUPPORTED_CPU)
 
@@ -1625,7 +1631,43 @@ static inline bool kvm_system_needs_idmapped_vectors(void)
 	return cpus_have_final_cap(ARM64_SPECTRE_V3A);
 }
 
-void kvm_init_host_debug_data(void);
+static inline bool cpu_has_spe(u64 dfr0)
+{
+	return cpuid_feature_extract_unsigned_field(dfr0, ID_AA64DFR0_EL1_PMSVer_SHIFT) &&
+	       !(read_sysreg_s(SYS_PMBIDR_EL1) & PMBIDR_EL1_P);
+}
+
+static inline void kvm_init_host_debug_data(void)
+{
+	u64 dfr0 = read_sysreg(id_aa64dfr0_el1);
+
+	if (cpuid_feature_extract_signed_field(dfr0, ID_AA64DFR0_EL1_PMUVer_SHIFT) > 0)
+		*host_data_ptr(nr_event_counters) = FIELD_GET(ARMV8_PMU_PMCR_N,
+							      read_sysreg(pmcr_el0));
+
+	*host_data_ptr(debug_brps) = SYS_FIELD_GET(ID_AA64DFR0_EL1, BRPs, dfr0);
+	*host_data_ptr(debug_wrps) = SYS_FIELD_GET(ID_AA64DFR0_EL1, WRPs, dfr0);
+
+	if (cpu_has_spe(dfr0))
+		host_data_set_flag(HAS_SPE);
+
+	if (has_vhe())
+		return;
+
+	/* Check if we have BRBE implemented and available at the host */
+	if (cpuid_feature_extract_unsigned_field(dfr0, ID_AA64DFR0_EL1_BRBE_SHIFT))
+		host_data_set_flag(HAS_BRBE);
+
+	if (cpuid_feature_extract_unsigned_field(dfr0, ID_AA64DFR0_EL1_TraceFilt_SHIFT)) {
+		/* Force disable trace in protected mode in case of no TRBE */
+		if (is_protected_kvm_enabled())
+			host_data_set_flag(EL1_TRACING_CONFIGURED);
+
+		if (cpuid_feature_extract_unsigned_field(dfr0, ID_AA64DFR0_EL1_TraceBuffer_SHIFT) &&
+		    !(read_sysreg_s(SYS_TRBIDR_EL1) & TRBIDR_EL1_P))
+			host_data_set_flag(HAS_TRBE);
+	}
+}
 void kvm_debug_init_vhe(void);
 void kvm_vcpu_load_debug(struct kvm_vcpu *vcpu);
 void kvm_vcpu_put_debug(struct kvm_vcpu *vcpu);
@@ -1727,7 +1769,7 @@ static inline bool __vcpu_has_feature(const struct kvm_arch *ka, int feature)
 #define kvm_vcpu_has_feature(k, f)	__vcpu_has_feature(&(k)->arch, (f))
 #define vcpu_has_feature(v, f)	__vcpu_has_feature(&(v)->kvm->arch, (f))
 
-#define kvm_vcpu_initialized(v) vcpu_get_flag(vcpu, VCPU_INITIALIZED)
+#define kvm_vcpu_initialized(v) vcpu_get_flag(v, VCPU_INITIALIZED)
 
 int kvm_trng_call(struct kvm_vcpu *vcpu);
 #ifdef CONFIG_KVM
@@ -1994,6 +2036,7 @@ int kvm_iommu_register_driver(struct kvm_iommu_driver *kern_ops,
 
 int kvm_iommu_init_driver(void);
 int kvm_iommu_register_hyp_ops(struct kvm_iommu_ops *hyp_ops, pkvm_handle_t *drv_id);
+int kvm_iommu_init_atomic_pool(struct kvm_hyp_memcache *atomic_mc);
 size_t kvm_iommu_pages(void);
 int kvm_get_iommu_id_by_of(struct device_node *np, pkvm_handle_t *out_id);
 int kvm_get_iommu_endpoint(struct of_phandle_args *iommu_spec, u64 *out_endpoint);
@@ -2021,7 +2064,7 @@ int kvm_iommu_attach_dev_nested(pkvm_handle_t iommu_id, pkvm_handle_t domain_id,
 				unsigned long flags, void *s1_desc_hva,
 				size_t s1_desc_size);
 int kvm_iommu_set_identity(pkvm_handle_t drv_id, pkvm_handle_t iommu,
-			   pkvm_handle_t dev, bool on);
+			   pkvm_handle_t dev, bool on, unsigned long flags);
 size_t kvm_iommu_map_sg(pkvm_handle_t domain_id, struct kvm_iommu_sg *sg,
 			unsigned long iova, unsigned int nent,
 			unsigned int prot, gfp_t gfp);
@@ -2029,6 +2072,8 @@ int kvm_iommu_iotlb_inv_nested_domain(pkvm_handle_t domain_id, unsigned long iov
 				      size_t granule, bool leaf);
 int kvm_iommu_nested_cfg_sync(pkvm_handle_t drv_id, pkvm_handle_t iommu_id, void *cmd_desc_hva,
 			      size_t cmd_desc_size);
+int kvm_iommu_page_response(pkvm_handle_t drv_id, pkvm_handle_t iommu_id, unsigned int endpoint,
+			    unsigned int pasid, unsigned int grpid, unsigned int status_code);
 #endif
 /*
  * Unlike previous android versions, where we supported 1 << 16 domains,

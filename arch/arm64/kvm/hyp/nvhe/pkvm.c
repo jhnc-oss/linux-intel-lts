@@ -28,6 +28,15 @@
 #include <nvhe/pviommu-host.h>
 #include <nvhe/trap_handler.h>
 
+int pkvm_refill_memcache(struct pkvm_hyp_vcpu *hyp_vcpu)
+{
+	struct kvm_vcpu *host_vcpu = hyp_vcpu->host_vcpu;
+
+	return refill_memcache(&hyp_vcpu->vcpu.arch.stage2_mc,
+			       host_vcpu->arch.stage2_mc.nr_pages,
+			       &host_vcpu->arch.stage2_mc);
+}
+
 /* Used by icache_is_aliasing(). */
 unsigned long __icache_flags;
 
@@ -440,17 +449,18 @@ static int pkvm_init_features_from_host(struct pkvm_hyp_vm *hyp_vm, const struct
 		memcpy(kvm->arch.id_regs, host_kvm->arch.id_regs, sizeof(kvm->arch.id_regs));
 		memcpy(kvm->arch.fgu, host_kvm->arch.fgu, sizeof(kvm->arch.fgu));
 
-		return 0;
+		goto out;
 	}
 
 	kvm->arch.vcpu_features[0] = pvm_supported_vcpu_features(kvm) &
 				     host_kvm->arch.vcpu_features[0];
 
-	if (kvm_pkvm_ext_allowed(kvm, KVM_CAP_ARM_SVE) && kvm_has_sve(host_kvm))
-		set_bit(KVM_ARCH_FLAG_GUEST_HAS_SVE, &kvm->arch.flags);
-
 	if (kvm_pkvm_ext_allowed(kvm, KVM_CAP_ARM_MTE) && kvm_has_mte(host_kvm))
 		set_bit(KVM_ARCH_FLAG_MTE_ENABLED, &kvm->arch.flags);
+
+out:
+	__assign_bit(KVM_ARCH_FLAG_GUEST_HAS_SVE, &kvm->arch.flags,
+		     kvm_vcpu_has_feature(kvm, KVM_ARM_VCPU_SVE));
 
 	return 0;
 }
@@ -472,21 +482,22 @@ static int pkvm_vcpu_init_psci(struct pkvm_hyp_vcpu *hyp_vcpu, u32 mp_state)
 	if (mp_state == KVM_MP_STATE_STOPPED) {
 		reset_state->reset = false;
 		hyp_vcpu->power_state = PSCI_0_2_AFFINITY_LEVEL_OFF;
-	} else if (pkvm_hyp_vm_has_pvmfw(hyp_vm)) {
-		if (hyp_vm->pvmfw_entry_vcpu)
-			return -EINVAL;
+		return 0;
+	}
 
-		hyp_vm->pvmfw_entry_vcpu = hyp_vcpu;
-		reset_state->reset = true;
-		hyp_vcpu->power_state = PSCI_0_2_AFFINITY_LEVEL_ON_PENDING;
-	} else {
+	if (READ_ONCE(hyp_vm->primary_vcpu))
+		return -EINVAL;
+
+	if (!pkvm_hyp_vm_has_pvmfw(hyp_vm)) {
 		struct kvm_vcpu *host_vcpu = hyp_vcpu->host_vcpu;
 
 		reset_state->pc = READ_ONCE(host_vcpu->arch.ctxt.regs.pc);
 		reset_state->r0 = READ_ONCE(host_vcpu->arch.ctxt.regs.regs[0]);
-		reset_state->reset = true;
-		hyp_vcpu->power_state = PSCI_0_2_AFFINITY_LEVEL_ON_PENDING;
 	}
+
+	WRITE_ONCE(hyp_vm->primary_vcpu, hyp_vcpu);
+	reset_state->reset = true;
+	hyp_vcpu->power_state = PSCI_0_2_AFFINITY_LEVEL_ON_PENDING;
 
 	return 0;
 }
@@ -523,6 +534,25 @@ static void teardown_sve_state(struct pkvm_hyp_vcpu *hyp_vcpu)
 
 		hyp_free_account(sve_state, hyp_vm->host_kvm);
 	}
+}
+
+static void teardown_hyp_vcpu_init(struct pkvm_hyp_vcpu *hyp_vcpu)
+{
+	struct pkvm_hyp_vm *hyp_vm = pkvm_hyp_vcpu_to_hyp_vm(hyp_vcpu);
+
+	unpin_host_vcpu(hyp_vcpu);
+
+	/* Only runs pre-publish; the slot can only hold NULL or this vCPU. */
+	if (READ_ONCE(hyp_vm->primary_vcpu) == hyp_vcpu)
+		WRITE_ONCE(hyp_vm->primary_vcpu, NULL);
+
+	if (!hyp_vcpu->vcpu.arch.sve_state)
+		return;
+
+	if (pkvm_hyp_vcpu_is_protected(hyp_vcpu))
+		teardown_sve_state(hyp_vcpu);
+	else
+		unpin_host_sve_state(hyp_vcpu);
 }
 
 static void unpin_host_vcpus(struct pkvm_hyp_vcpu *hyp_vcpus[],
@@ -562,13 +592,15 @@ static int init_pkvm_hyp_vm(struct kvm *host_kvm, struct pkvm_hyp_vm *hyp_vm,
 	hyp_vm->kvm.created_vcpus = nr_vcpus;
 	hyp_vm->kvm.arch.pkvm.is_protected = READ_ONCE(host_kvm->arch.pkvm.is_protected);
 
-	if (hyp_vm->kvm.arch.pkvm.is_protected)
+	if (hyp_vm->kvm.arch.pkvm.is_protected) {
 		pvmfw_load_addr = READ_ONCE(host_kvm->arch.pkvm.pvmfw_load_addr);
+		if ((pvmfw_load_addr != PVMFW_INVALID_LOAD_ADDR) && !PAGE_ALIGNED(pvmfw_load_addr))
+			return -EINVAL;
+	}
 	hyp_vm->kvm.arch.pkvm.pvmfw_load_addr = pvmfw_load_addr;
 
 	hyp_vm->kvm.arch.pkvm.smc_forwarded = READ_ONCE(host_kvm->arch.pkvm.smc_forwarded);
 	hyp_vm->kvm.arch.pkvm.ffa_support = READ_ONCE(host_kvm->arch.pkvm.ffa_support);
-	hyp_vm->kvm.arch.pkvm.is_created = true;
 	hyp_vm->kvm.arch.flags = 0;
 
 	ret = pkvm_init_features_from_host(hyp_vm, host_kvm);
@@ -601,14 +633,15 @@ static int pkvm_vcpu_init_sve(struct pkvm_hyp_vcpu *hyp_vcpu, struct kvm_vcpu *h
 
 	/* Limit guest vector length to the maximum supported by the host. */
 	sve_max_vl = min(READ_ONCE(host_vcpu->arch.sve_max_vl), kvm_host_sve_max_vl);
-	sve_state_size = sve_state_size_from_vl(sve_max_vl);
 	sve_state = kern_hyp_va(READ_ONCE(host_vcpu->arch.sve_state));
+
+	if (!sve_vl_valid(sve_max_vl) || sve_max_vl > kvm_sve_max_vl)
+		return -EINVAL;
 
 	if (!sve_state && !pkvm_hyp_vcpu_is_protected(hyp_vcpu))
 		return -EINVAL;
 
-	if (!sve_state_size || (sve_max_vl > kvm_sve_max_vl))
-		return -EINVAL;
+	sve_state_size = sve_state_size_from_vl(sve_max_vl);
 
 	if (pkvm_hyp_vcpu_is_protected(hyp_vcpu)) {
 		struct pkvm_hyp_vm *hyp_vm = pkvm_hyp_vcpu_to_hyp_vm(hyp_vcpu);
@@ -666,40 +699,36 @@ static int init_pkvm_hyp_vcpu(struct pkvm_hyp_vcpu *hyp_vcpu,
 			      struct pkvm_hyp_vm *hyp_vm,
 			      struct kvm_vcpu *host_vcpu)
 {
-	int ret = 0;
-	u32 mp_state;
+	struct kvm_hyp_req *hyp_reqs_va;
 	struct kvm_hyp_req *hyp_reqs;
+	u32 mp_state;
+	int ret = -EINVAL;
 
 	if (hyp_pin_shared_mem(host_vcpu, host_vcpu + 1))
 		return -EBUSY;
 
-	hyp_reqs = READ_ONCE(host_vcpu->arch.hyp_reqs);
-	if (!PAGE_ALIGNED(hyp_reqs)) {
-		hyp_unpin_shared_mem(host_vcpu, host_vcpu + 1);
-		return -EINVAL;
-	}
-
-	hyp_vcpu->vcpu.arch.hyp_reqs = kern_hyp_va(hyp_reqs);
-	if (hyp_pin_shared_mem(hyp_vcpu->vcpu.arch.hyp_reqs,
-			       hyp_vcpu->vcpu.arch.hyp_reqs + 1)) {
-		hyp_unpin_shared_mem(host_vcpu, host_vcpu + 1);
-		return -EBUSY;
-	}
+	/* Set before mp_state check so 'done:' cleanup can unpin host_vcpu. */
+	hyp_vcpu->host_vcpu = host_vcpu;
+	hyp_vcpu->vcpu.kvm = &hyp_vm->kvm;
 
 	mp_state = READ_ONCE(host_vcpu->arch.mp_state.mp_state);
-	if (mp_state != KVM_MP_STATE_RUNNABLE && mp_state != KVM_MP_STATE_STOPPED) {
-		ret = -EINVAL;
+	if (mp_state != KVM_MP_STATE_RUNNABLE && mp_state != KVM_MP_STATE_STOPPED)
 		goto done;
-	}
 
-	hyp_vcpu->host_vcpu = host_vcpu;
+	hyp_reqs = READ_ONCE(host_vcpu->arch.hyp_reqs);
+	if (!PAGE_ALIGNED(hyp_reqs))
+		goto done;
 
-	hyp_vcpu->vcpu.kvm = &hyp_vm->kvm;
+	hyp_reqs_va = kern_hyp_va(hyp_reqs);
+	if (hyp_pin_shared_mem(hyp_reqs_va, hyp_reqs_va + 1))
+		goto done;
+
 	hyp_vcpu->vcpu.vcpu_id = READ_ONCE(host_vcpu->vcpu_id);
 	hyp_vcpu->vcpu.vcpu_idx = READ_ONCE(host_vcpu->vcpu_idx);
 
 	hyp_vcpu->vcpu.arch.hw_mmu = &hyp_vm->kvm.arch.mmu;
 	hyp_vcpu->vcpu.arch.cflags = READ_ONCE(host_vcpu->arch.cflags);
+	hyp_vcpu->vcpu.arch.hyp_reqs = hyp_reqs_va;
 	hyp_vcpu->vcpu.arch.hyp_reqs->type = KVM_HYP_LAST_REQ;
 
 	ret = pkvm_vcpu_init_sysregs(hyp_vcpu);
@@ -719,7 +748,7 @@ static int init_pkvm_hyp_vcpu(struct pkvm_hyp_vcpu *hyp_vcpu,
 		goto done;
 done:
 	if (ret)
-		unpin_host_vcpu(hyp_vcpu);
+		teardown_hyp_vcpu_init(hyp_vcpu);
 	return ret;
 }
 
@@ -1017,7 +1046,7 @@ err_unpin_kvm:
 	return ret;
 }
 
-struct ffa_mem_transfer *__pkvm_get_vm_ffa_transfer(u16 handle)
+struct ffa_mem_transfer *__pkvm_get_vm_ffa_transfer(u64 handle)
 {
 	struct pkvm_hyp_vm *vm;
 	struct ffa_mem_transfer *transfer = NULL;
@@ -1033,6 +1062,25 @@ unlock:
 	return transfer;
 }
 
+static int register_hyp_vcpu(struct pkvm_hyp_vm *hyp_vm,
+			      struct pkvm_hyp_vcpu *hyp_vcpu)
+{
+	unsigned int idx = hyp_vcpu->vcpu.vcpu_idx;
+
+	if (idx >= hyp_vm->kvm.created_vcpus)
+		return -EINVAL;
+
+	if (hyp_vm->vcpus[idx])
+		return -EINVAL;
+
+	/*
+	 * Ensure the hyp_vcpu is initialised before publishing it to
+	 * the vCPU-load path via 'hyp_vm->vcpus[]'.
+	 */
+	smp_store_release(&hyp_vm->vcpus[idx], hyp_vcpu);
+	return 0;
+}
+
 /*
  * Initialize the hypervisor copy of the vCPU state using host-donated memory.
  *
@@ -1045,7 +1093,6 @@ int __pkvm_init_vcpu(pkvm_handle_t handle, struct kvm_vcpu *host_vcpu)
 {
 	struct pkvm_hyp_vcpu *hyp_vcpu;
 	struct pkvm_hyp_vm *hyp_vm;
-	unsigned int idx;
 	int ret;
 
 	hyp_read_lock(&vm_table_lock);
@@ -1067,22 +1114,9 @@ int __pkvm_init_vcpu(pkvm_handle_t handle, struct kvm_vcpu *host_vcpu)
 	if (ret)
 		goto unlock_vcpus;
 
-	idx = hyp_vcpu->vcpu.vcpu_idx;
-	if (idx >= hyp_vm->kvm.created_vcpus) {
-		ret = -EINVAL;
-		goto unlock_vcpus;
-	}
-
-	if (hyp_vm->vcpus[idx]) {
-		ret = -EINVAL;
-		goto unlock_vcpus;
-	}
-
-	/*
-	 * Ensure the hyp_vcpu is initialised before publishing it to
-	 * the vCPU-load path via 'hyp_vm->vcpus[]'.
-	 */
-	smp_store_release(&hyp_vm->vcpus[idx], hyp_vcpu);
+	ret = register_hyp_vcpu(hyp_vm, hyp_vcpu);
+	if (ret)
+		teardown_hyp_vcpu_init(hyp_vcpu);
 unlock_vcpus:
 	hyp_spin_unlock(&hyp_vm->vcpus_lock);
 
@@ -1101,7 +1135,7 @@ int __pkvm_reclaim_dying_guest_page(pkvm_handle_t handle, u64 gfn, u64 nr_pages)
 
 	hyp_read_lock(&vm_table_lock);
 	hyp_vm = get_vm_by_handle(handle);
-	if (!hyp_vm || !hyp_vm->is_dying)
+	if (!hyp_vm || (hyp_vm->is_dying != PROTECTED_VM_DEAD))
 		goto unlock;
 
 	ret = __pkvm_host_reclaim_page_guest(gfn, nr_pages, hyp_vm);
@@ -1115,25 +1149,45 @@ unlock:
 	return ret;
 }
 
+static struct pkvm_hyp_vm *get_pkvm_unref_hyp_vm_locked(pkvm_handle_t handle)
+{
+	struct pkvm_hyp_vm *hyp_vm;
+
+	hyp_vm = get_vm_by_handle(handle);
+	if (!hyp_vm || hyp_refcount_get(hyp_vm->refcount))
+		return NULL;
+
+	return hyp_vm;
+}
+
 int __pkvm_start_teardown_vm(pkvm_handle_t handle)
 {
 	struct pkvm_hyp_vm *hyp_vm;
 	int ret = 0;
 
 	hyp_write_lock(&vm_table_lock);
-	hyp_vm = get_vm_by_handle(handle);
-	if (!hyp_vm) {
-		ret = -ENOENT;
-		goto unlock;
-	} else if (WARN_ON(hyp_refcount_get(hyp_vm->refcount))) {
-		ret = -EBUSY;
-		goto unlock;
-	} else if (hyp_vm->is_dying) {
+	hyp_vm = get_pkvm_unref_hyp_vm_locked(handle);
+	if (!hyp_vm || hyp_vm->is_dying) {
 		ret = -EINVAL;
 		goto unlock;
 	}
 
-	hyp_vm->is_dying = true;
+	hyp_vm->is_dying = PROTECTED_VM_DYING;
+	hyp_write_unlock(&vm_table_lock);
+
+	/*
+	 * vCPUs are quiescent, but assigned devices may still be issuing DMA
+	 * via the guest's SMMU domains. Block DMA and tear down guest IOMMU
+	 * translations *before* allowing __pkvm_host_reclaim_page() to hand
+	 * OWNED pages (which may still carry a DMA hyp_page->refcount) back
+	 * to the host.
+	 */
+	pkvm_devices_teardown(hyp_vm);
+	pkvm_pviommu_teardown(hyp_vm);
+
+	hyp_write_lock(&vm_table_lock);
+	hyp_vm->is_dying = PROTECTED_VM_DEAD;
+
 unlock:
 	hyp_write_unlock(&vm_table_lock);
 
@@ -1149,12 +1203,9 @@ int __pkvm_finalize_teardown_vm(pkvm_handle_t handle)
 	int err;
 
 	hyp_write_lock(&vm_table_lock);
-	hyp_vm = get_vm_by_handle(handle);
-	if (!hyp_vm) {
-		err = -ENOENT;
-		goto err_unlock;
-	} else if (!hyp_vm->is_dying) {
-		err = -EBUSY;
+	hyp_vm = get_pkvm_unref_hyp_vm_locked(handle);
+	if (!hyp_vm || (hyp_vm->is_dying != PROTECTED_VM_DEAD)) {
+		err = -EINVAL;
 		goto err_unlock;
 	}
 
@@ -1170,10 +1221,6 @@ int __pkvm_finalize_teardown_vm(pkvm_handle_t handle)
 		err = kvm_dying_guest_reclaim_ffa_resources(hyp_vm);
 	} while (err == -EAGAIN);
 	WARN_ON(err);
-
-	pkvm_devices_teardown(hyp_vm);
-
-	pkvm_pviommu_teardown(hyp_vm);
 
 	/*
 	 * At this point all page tables are destroyed and should be pushed to the pool
@@ -1271,25 +1318,54 @@ void pkvm_poison_pvmfw_pages(void)
 }
 
 /*
- * This function sets the registers on the vcpu to their architecturally defined
- * reset values.
+ * Gate entry to the vCPU; on the first entry after OFF -> ON_PENDING,
+ * reset its registers to architectural values.
  *
- * Note: Can only be called by the vcpu on itself, after it has been turned on.
+ * Returns 0 if the vCPU is runnable on return, or -ECANCELED if a
+ * concurrent rollback or unpublished reset_state cancelled this entry.
+ *
+ * Caller must be the vCPU itself.
  */
-void pkvm_reset_vcpu(struct pkvm_hyp_vcpu *hyp_vcpu)
+int pkvm_reset_vcpu(struct pkvm_hyp_vcpu *hyp_vcpu)
 {
 	struct kvm_vcpu *vcpu = &hyp_vcpu->vcpu;
 	struct vcpu_reset_state *reset_state = &vcpu->arch.reset_state;
 	struct pkvm_hyp_vm *hyp_vm = pkvm_hyp_vcpu_to_hyp_vm(hyp_vcpu);
+	int prev;
 
-	WARN_ON(!reset_state->reset);
+	/*
+	 * Pair with smp_store_release in pvm_psci_vcpu_on() (or the
+	 * plain write under vcpus_lock in pkvm_vcpu_init_psci() for
+	 * first-run). False: source not yet published, bail.
+	 */
+	if (!smp_load_acquire(&reset_state->reset))
+		return -ECANCELED;
+
+	/*
+	 * Commit ON_PENDING -> ON before any side effect: a concurrent
+	 * rollback may race and advance power_state to OFF. Relaxed:
+	 * atomic transition + observe prior is the contract; reset_state
+	 * publication is the release/acquire pair above.
+	 */
+	prev = cmpxchg_relaxed(&hyp_vcpu->power_state,
+			       PSCI_0_2_AFFINITY_LEVEL_ON_PENDING,
+			       PSCI_0_2_AFFINITY_LEVEL_ON);
+	if (prev != PSCI_0_2_AFFINITY_LEVEL_ON_PENDING) {
+		/*
+		 * Only a concurrent rollback (ON_PENDING -> OFF) can race us
+		 * here.
+		 */
+		WARN_ON(prev != PSCI_0_2_AFFINITY_LEVEL_OFF);
+		return -ECANCELED;
+	}
 
 	kvm_reset_vcpu_core(vcpu);
 	kvm_reset_pvm_sys_regs(vcpu);
 
 	/* Must be done after reseting sys registers. */
 	kvm_reset_vcpu_psci(vcpu, reset_state);
-	if (hyp_vm->pvmfw_entry_vcpu == hyp_vcpu) {
+	if (pkvm_hyp_vm_has_pvmfw(hyp_vm) &&
+	    READ_ONCE(hyp_vm->primary_vcpu) == hyp_vcpu) {
 		struct kvm_vcpu *host_vcpu = hyp_vcpu->host_vcpu;
 		u64 entry = hyp_vm->kvm.arch.pkvm.pvmfw_load_addr;
 		int i;
@@ -1306,7 +1382,13 @@ void pkvm_reset_vcpu(struct pkvm_hyp_vcpu *hyp_vcpu)
 
 		/* PC: IPA of pvmfw base */
 		*vcpu_pc(&hyp_vcpu->vcpu) = entry;
-		hyp_vm->pvmfw_entry_vcpu = NULL;
+
+		/*
+		 * Single-writer (this vCPU, post cmpxchg ON_PENDING -> ON).
+		 * WRITE_ONCE pairs with READ_ONCE under vcpus_lock in
+		 * pkvm_vcpu_init_psci() / pkvm_reset_vcpu().
+		 */
+		WRITE_ONCE(hyp_vm->primary_vcpu, PKVM_PVMFW_ENTERED);
 
 		/* Auto enroll MMIO guard */
 		set_bit(KVM_ARCH_FLAG_MMIO_GUARD, &hyp_vm->kvm.arch.flags);
@@ -1319,8 +1401,7 @@ void pkvm_reset_vcpu(struct pkvm_hyp_vcpu *hyp_vcpu)
 
 	hyp_vcpu->exit_code = 0;
 
-	WARN_ON(hyp_vcpu->power_state != PSCI_0_2_AFFINITY_LEVEL_ON_PENDING);
-	WRITE_ONCE(hyp_vcpu->power_state, PSCI_0_2_AFFINITY_LEVEL_ON);
+	return 0;
 }
 
 struct kvm_hyp_req *pkvm_hyp_req_reserve(struct pkvm_hyp_vcpu *hyp_vcpu, u8 type)
@@ -1361,6 +1442,9 @@ struct pkvm_hyp_vcpu *pkvm_mpidr_to_hyp_vcpu(struct pkvm_hyp_vm *hyp_vm,
 	for (i = 0; i < hyp_vm->kvm.created_vcpus; i++) {
 		hyp_vcpu = hyp_vm->vcpus[i];
 
+		if (!hyp_vcpu)
+			continue;
+
 		if (mpidr == kvm_vcpu_get_mpidr_aff(&hyp_vcpu->vcpu))
 			goto unlock;
 	}
@@ -1397,11 +1481,14 @@ static bool pvm_psci_vcpu_on(struct pkvm_hyp_vcpu *hyp_vcpu)
 
 	/*
 	 * Make sure the requested vcpu is not on to begin with.
-	 * Atomic to avoid race between vcpus trying to power on the same vcpu.
+	 * Atomic to avoid race between vcpus powering on the same vcpu.
+	 * Relaxed: atomic transition + observe prior is the contract;
+	 * publication of the reset_state writes below is the
+	 * smp_store_release on reset_state->reset.
 	 */
-	power_state = cmpxchg(&target->power_state,
-			      PSCI_0_2_AFFINITY_LEVEL_OFF,
-			      PSCI_0_2_AFFINITY_LEVEL_ON_PENDING);
+	power_state = cmpxchg_relaxed(&target->power_state,
+				      PSCI_0_2_AFFINITY_LEVEL_OFF,
+				      PSCI_0_2_AFFINITY_LEVEL_ON_PENDING);
 	switch (power_state) {
 	case PSCI_0_2_AFFINITY_LEVEL_ON_PENDING:
 		ret = PSCI_RET_ON_PENDING;
@@ -1421,7 +1508,8 @@ static bool pvm_psci_vcpu_on(struct pkvm_hyp_vcpu *hyp_vcpu)
 	reset_state->r0 = smccc_get_arg3(&hyp_vcpu->vcpu);
 	/* Propagate caller endianness */
 	reset_state->be = kvm_vcpu_is_be(&hyp_vcpu->vcpu);
-	reset_state->reset = true;
+	/* Pair with smp_load_acquire in pkvm_reset_vcpu(). */
+	smp_store_release(&reset_state->reset, true);
 
 	/*
 	 * Return to the host, which should make the KVM_REQ_VCPU_RESET request
@@ -1470,6 +1558,9 @@ static bool pvm_psci_vcpu_affinity_info(struct pkvm_hyp_vcpu *hyp_vcpu)
 	for (i = 0; i < hyp_vm->kvm.created_vcpus; i++) {
 		struct pkvm_hyp_vcpu *target = hyp_vm->vcpus[i];
 
+		if (!target)
+			continue;
+
 		mpidr = kvm_vcpu_get_mpidr_aff(&target->vcpu);
 
 		if ((mpidr & target_affinity_mask) == target_affinity) {
@@ -1510,7 +1601,12 @@ done:
  */
 static bool pvm_psci_vcpu_off(struct pkvm_hyp_vcpu *hyp_vcpu)
 {
-	WARN_ON(hyp_vcpu->power_state != PSCI_0_2_AFFINITY_LEVEL_ON);
+	/*
+	 * No concurrent writer: this vCPU is running guest code (so
+	 * power_state == ON), and the other CPUs' cmpxchg sites gate
+	 * on OFF (CPU_ON) or ON_PENDING (rollback).
+	 */
+	WARN_ON(READ_ONCE(hyp_vcpu->power_state) != PSCI_0_2_AFFINITY_LEVEL_ON);
 	WRITE_ONCE(hyp_vcpu->power_state, PSCI_0_2_AFFINITY_LEVEL_OFF);
 
 	/* Return to the host so that it can finish powering off the vcpu. */
@@ -1674,14 +1770,15 @@ static int pkvm_request_map(struct pkvm_hyp_vcpu *hyp_vcpu, u64 ipa, u64 nr_page
 	return 0;
 }
 
-static int pkvm_request_host_s2(struct pkvm_hyp_vcpu *hyp_vcpu, u64 *exit_code)
+int pkvm_request_host_s2(struct pkvm_hyp_vcpu *hyp_vcpu, u64 *exit_code, bool rewind)
 {
 	struct kvm_hyp_req *req = pkvm_hyp_req_reserve(hyp_vcpu, KVM_HYP_REQ_TYPE_MEM_HOST_S2);
 
 	if (!req)
 		return -ENOMEM;
 
-	write_sysreg_el2(read_sysreg_el2(SYS_ELR) - 4, SYS_ELR);
+	if (rewind)
+		write_sysreg_el2(read_sysreg_el2(SYS_ELR) - 4, SYS_ELR);
 	*exit_code = ARM_EXCEPTION_HYP_REQ;
 
 	return 0;
@@ -1723,7 +1820,7 @@ static bool pkvm_memshare_call(struct pkvm_hyp_vcpu *hyp_vcpu, u64 *exit_code)
 
 		goto out_host;
 	case -ENOMEMHOSTS2:
-		if (pkvm_request_host_s2(hyp_vcpu, exit_code))
+		if (pkvm_request_host_s2(hyp_vcpu, exit_code, true))
 			goto out_guest_err;
 
 		goto out_host;
@@ -1763,7 +1860,7 @@ static bool pkvm_memunshare_call(struct pkvm_hyp_vcpu *hyp_vcpu, u64 *exit_code)
 
 		return true;
 	case -ENOMEMHOSTS2:
-		if (pkvm_request_host_s2(hyp_vcpu, exit_code))
+		if (pkvm_request_host_s2(hyp_vcpu, exit_code, true))
 			goto out_guest_err;
 
 		return false;
@@ -1790,6 +1887,19 @@ static bool pkvm_install_ioguard_page(struct pkvm_hyp_vcpu *hyp_vcpu,
 		nr_pages = 1;
 	else if (smccc_get_arg3(&hyp_vcpu->vcpu))
 		goto out_guest_err;
+
+	ret = pkvm_refill_memcache(hyp_vcpu);
+	switch (ret) {
+	case 0:
+		break;
+	case -ENOMEMHOSTS2:
+		if (pkvm_request_host_s2(hyp_vcpu, exit_code, true))
+			goto out_guest_err;
+
+		return false;
+	default:
+		goto out_guest_err;
+	}
 
 	ret = __pkvm_install_ioguard_page(hyp_vcpu, ipa, nr_pages, &nr_guarded);
 	if (ret == -ENOMEM && !pkvm_request_vcpu_memcache(hyp_vcpu, exit_code, true))
@@ -1878,7 +1988,7 @@ static bool pkvm_memrelinquish_call(struct pkvm_hyp_vcpu *hyp_vcpu, u64 *exit_co
 
 		return false;
 	case -ENOMEMHOSTS2:
-		if (pkvm_request_host_s2(hyp_vcpu, exit_code))
+		if (pkvm_request_host_s2(hyp_vcpu, exit_code, true))
 			goto out_guest_err;
 
 		return false;
@@ -2001,7 +2111,7 @@ static bool module_handle_guest_trng(struct kvm_vcpu *vcpu)
 }
 
 
-static bool is_standard_secure_service_call(u64 func_id)
+static bool is_standard_secure_service_call(u32 func_id)
 {
 	return (func_id >= PSCI_0_2_FN_BASE && func_id <= ARM_CCA_FUNC_END) ||
 	       (func_id >= PSCI_0_2_FN64_BASE && func_id <= ARM_CCA_64BIT_FUNC_END);
@@ -2016,6 +2126,7 @@ bool kvm_handle_pvm_smc64(struct kvm_vcpu *vcpu, u64 *exit_code)
 	struct arm_smccc_1_2_regs regs;
 	struct arm_smccc_1_2_regs res;
 	DECLARE_REG(u64, func_id, ctxt, 0);
+	int ret;
 
 	hyp_vcpu = container_of(vcpu, struct pkvm_hyp_vcpu, vcpu);
 	vm = pkvm_hyp_vcpu_to_hyp_vm(hyp_vcpu);
@@ -2025,6 +2136,20 @@ bool kvm_handle_pvm_smc64(struct kvm_vcpu *vcpu, u64 *exit_code)
 
 	if (!vm->kvm.arch.pkvm.smc_forwarded)
 		return false;
+
+	/* SMC handlers might use the vCPU memcache (GUEST_SMC_NEED_TOPUP) */
+	ret = pkvm_refill_memcache(hyp_vcpu);
+	switch (ret) {
+	case 0:
+		break;
+	case -ENOMEMHOSTS2:
+		if (pkvm_request_host_s2(hyp_vcpu, exit_code, false))
+			goto out_guest_err;
+
+		return false;
+	default:
+		goto out_guest_err;
+	}
 
 	memcpy(&regs, &ctxt->regs, sizeof(regs));
 	handler_ret = module_handle_guest_smc(&regs, &res, vm->kvm.arch.pkvm.handle);
@@ -2038,15 +2163,18 @@ bool kvm_handle_pvm_smc64(struct kvm_vcpu *vcpu, u64 *exit_code)
 	case GUEST_SMC_NEED_TOPUP:
 		if (!pkvm_request_vcpu_memcache(hyp_vcpu, exit_code, false))
 			return false;
-		smccc_set_retval(vcpu, SMCCC_RET_INVALID_PARAMETER, 0, 0, 0);
-		break;
+		goto out_guest_err;
 	default:
 		WARN_ON(1);
 	}
 
+out:
 	__kvm_skip_instr(vcpu);
-
 	return true;
+
+out_guest_err:
+	smccc_set_retval(vcpu, SMCCC_RET_INVALID_PARAMETER, 0, 0, 0);
+	goto out;
 }
 
 /*

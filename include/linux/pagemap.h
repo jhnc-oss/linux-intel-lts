@@ -15,6 +15,7 @@
 #include <linux/bitops.h>
 #include <linux/hardirq.h> /* for in_interrupt() */
 #include <linux/hugetlb_inline.h>
+#include <linux/android_kabi.h>
 
 struct folio_batch;
 
@@ -145,6 +146,8 @@ static inline bool mapping_empty(const struct address_space *mapping)
 	return xa_empty(&mapping->i_pages);
 }
 
+extern void _trace_android_rvh_mapping_shrinkable(bool *shrinkable);
+
 /*
  * mapping_shrinkable - test if page cache state allows inode reclaim
  * @mapping: the page cache mapping
@@ -169,7 +172,11 @@ static inline bool mapping_empty(const struct address_space *mapping)
 static inline bool mapping_shrinkable(const struct address_space *mapping)
 {
 	void *head;
+	bool shrinkable = false;
 
+	_trace_android_rvh_mapping_shrinkable(&shrinkable);
+	if (shrinkable)
+		return true;
 	/*
 	 * On highmem systems, there could be lowmem pressure from the
 	 * inodes before there is highmem pressure from the page
@@ -213,7 +220,6 @@ enum mapping_flags {
 	AS_WRITEBACK_MAY_DEADLOCK_ON_RECLAIM = 9,
 	AS_KERNEL_FILE = 10,	/* mapping for a fake kernel file that shouldn't
 				   account usage to user cgroups */
-	AS_NO_DATA_INTEGRITY = 11, /* no data integrity guarantees */
 	/* Bits 16-25 are used for FOLIO_ORDER */
 	AS_FOLIO_ORDER_BITS = 5,
 	AS_FOLIO_ORDER_MIN = 16,
@@ -347,16 +353,6 @@ static inline void mapping_set_writeback_may_deadlock_on_reclaim(struct address_
 static inline bool mapping_writeback_may_deadlock_on_reclaim(const struct address_space *mapping)
 {
 	return test_bit(AS_WRITEBACK_MAY_DEADLOCK_ON_RECLAIM, &mapping->flags);
-}
-
-static inline void mapping_set_no_data_integrity(struct address_space *mapping)
-{
-	set_bit(AS_NO_DATA_INTEGRITY, &mapping->flags);
-}
-
-static inline bool mapping_no_data_integrity(const struct address_space *mapping)
-{
-	return test_bit(AS_NO_DATA_INTEGRITY, &mapping->flags);
 }
 
 static inline gfp_t mapping_gfp_mask(const struct address_space *mapping)
@@ -667,8 +663,16 @@ static inline void *detach_page_private(struct page *page)
 #ifdef CONFIG_NUMA
 struct folio *filemap_alloc_folio_noprof(gfp_t gfp, unsigned int order);
 #else
+extern void _trace_android_vh_filemap_alloc_folio(gfp_t gfp, unsigned int order,
+					   bool *alloc_fail);
+
 static inline struct folio *filemap_alloc_folio_noprof(gfp_t gfp, unsigned int order)
 {
+	bool alloc_fail = false;
+	_trace_android_vh_filemap_alloc_folio(gfp, order, &alloc_fail);
+	if (alloc_fail)
+		return NULL;
+
 	return folio_alloc_noprof(gfp, order);
 }
 #endif
@@ -1350,7 +1354,9 @@ struct readahead_control {
 	bool dropbehind;
 	bool _workingset;
 	unsigned long _pflags;
+
 	ANDROID_OEM_DATA(1);
+	ANDROID_KABI_USE(1, pgoff_t _max_index); /* limit readahead to _max_index, inclusive */
 };
 
 #define DEFINE_READAHEAD(ractl, f, r, m, i)				\
@@ -1359,6 +1365,7 @@ struct readahead_control {
 		.mapping = m,						\
 		.ra = r,						\
 		._index = i,						\
+		._max_index = ULONG_MAX,				\
 	}
 
 #define VM_READAHEAD_PAGES	(SZ_128K / PAGE_SIZE)

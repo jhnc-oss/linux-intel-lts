@@ -211,6 +211,13 @@ impl Task {
         unsafe { *ptr::addr_of!((*self.as_ptr()).pid) }
     }
 
+    /// Returns the TGID (Thread Group ID / Process ID) of the given task.
+    pub fn tgid(&self) -> Pid {
+        // SAFETY: The tgid of a task never changes after initialization, so reading this field is
+        // not a data race.
+        unsafe { *ptr::addr_of!((*self.as_ptr()).tgid) }
+    }
+
     /// Returns the UID of the given task.
     #[inline]
     pub fn uid(&self) -> Kuid {
@@ -344,6 +351,17 @@ impl Task {
     pub fn set_user_nice(&self, nice: i32) {
         unsafe { bindings::set_user_nice(self.0.get(), nice as _) };
     }
+
+    /// Returns whether the task structure's mm field points to an mm struct.
+    #[inline]
+    pub fn has_mm(&self) -> bool {
+        // SAFETY: The caller holds a shared reference to the task struct, so this read is valid.
+        // This uses a volatile read because C code may be modifying this field in parallel using
+        // non-atomic unsynchronized writes. This corresponds to how the C macro READ_ONCE is
+        // implemented.
+        let mm = unsafe { core::ptr::addr_of!((*self.as_ptr()).mm).read_volatile() };
+        !mm.is_null()
+    }
 }
 
 impl CurrentTask {
@@ -436,6 +454,15 @@ unsafe impl crate::sync::aref::AlwaysRefCounted for Task {
         unsafe { bindings::put_task_struct(obj.cast().as_ptr()) }
     }
 }
+
+impl PartialEq for Task {
+    #[inline]
+    fn eq(&self, other: &Self) -> bool {
+        ptr::eq(self.as_ptr(), other.as_ptr())
+    }
+}
+
+impl Eq for Task {}
 
 impl Kuid {
     /// Get the current euid.

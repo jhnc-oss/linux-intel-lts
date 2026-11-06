@@ -2786,7 +2786,7 @@ extern void init_cfs_throttle_work(struct task_struct *p);
 #define MAX_BW_BITS		(64 - BW_SHIFT)
 #define MAX_BW			((1ULL << MAX_BW_BITS) - 1)
 
-extern unsigned long to_ratio(u64 period, u64 runtime);
+extern u64 to_ratio(u64 period, u64 runtime);
 
 extern void init_entity_runnable_average(struct sched_entity *se);
 extern void post_init_entity_util_avg(struct task_struct *p);
@@ -2890,6 +2890,48 @@ extern void activate_task(struct rq *rq, struct task_struct *p, int flags);
 extern void deactivate_task(struct rq *rq, struct task_struct *p, int flags);
 
 extern void wakeup_preempt(struct rq *rq, struct task_struct *p, int flags);
+
+/*
+ * attach_task() -- attach the task detached by detach_task() to its new rq.
+ */
+static inline void attach_task(struct rq *rq, struct task_struct *p)
+{
+	lockdep_assert_rq_held(rq);
+
+	WARN_ON_ONCE(task_rq(p) != rq);
+	activate_task(rq, p, ENQUEUE_NOCLOCK);
+	wakeup_preempt(rq, p, 0);
+}
+
+/*
+ * attach_one_task() -- attaches the task returned from detach_one_task() to
+ * its new rq.
+ */
+static inline void attach_one_task(struct rq *rq, struct task_struct *p)
+{
+	guard(rq_lock)(rq);
+	update_rq_clock(rq);
+	attach_task(rq, p);
+}
+
+/*
+ * __attach_tasks() - attaches a list of tasks (using se.group_node) to
+ * the new rq
+ */
+static inline void __attach_tasks(struct rq *rq, struct list_head *tasks)
+{
+	guard(rq_lock)(rq);
+	update_rq_clock(rq);
+
+	while (!list_empty(tasks)) {
+		struct task_struct *p;
+
+		p = list_first_entry(tasks, struct task_struct, se.group_node);
+		list_del_init(&p->se.group_node);
+
+		attach_task(rq, p);
+	}
+}
 
 #ifdef CONFIG_PREEMPT_RT
 # define SCHED_NR_MIGRATE_BREAK 8
@@ -4027,23 +4069,38 @@ extern struct balance_callback *splice_balance_callbacks(struct rq *rq);
 extern void balance_callbacks(struct rq *rq, struct balance_callback *head);
 extern void __balance_callbacks(struct rq *rq);
 
-#ifdef CONFIG_SCHED_CLASS_EXT
 /*
- * Used by SCX in the enable/disable paths to move tasks between sched_classes
- * and establish invariants.
+ * The 'sched_change' pattern is the safe, easy and slow way of changing a
+ * task's scheduling properties. It dequeues a task, such that the scheduler
+ * is fully unaware of it; at which point its properties can be modified;
+ * after which it is enqueued again.
+ *
+ * Typically this must be called while holding task_rq_lock, since most/all
+ * properties are serialized under those locks. There is currently one
+ * exception to this rule in sched/ext which only holds rq->lock.
  */
-struct sched_enq_and_set_ctx {
+
+/*
+ * This structure is a temporary, used to preserve/convey the queueing state
+ * of the task between sched_change_begin() and sched_change_end(). Ensuring
+ * the task's queueing state is idempotent across the operation.
+ */
+struct sched_change_ctx {
 	struct task_struct	*p;
-	int			queue_flags;
+	int			flags;
 	bool			queued;
 	bool			running;
 };
 
-void sched_deq_and_put_task(struct task_struct *p, int queue_flags,
-			    struct sched_enq_and_set_ctx *ctx);
-void sched_enq_and_set_task(struct sched_enq_and_set_ctx *ctx);
+struct sched_change_ctx *sched_change_begin(struct task_struct *p, unsigned int flags);
+void sched_change_end(struct sched_change_ctx *ctx);
 
-#endif /* CONFIG_SCHED_CLASS_EXT */
+DEFINE_CLASS(sched_change, struct sched_change_ctx *,
+	     sched_change_end(_T),
+	     sched_change_begin(p, flags),
+	     struct task_struct *p, unsigned int flags)
+
+DEFINE_CLASS_IS_UNCONDITIONAL(sched_change)
 
 #include "ext.h"
 

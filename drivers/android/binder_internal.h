@@ -348,8 +348,8 @@ struct binder_ref {
 
 /**
  * struct binder_priority - scheduler policy and priority
- * @sched_policy            scheduler policy
- * @prio                    [100..139] for SCHED_NORMAL, [0..99] for FIFO/RT
+ * @sched_policy:           scheduler policy
+ * @prio:                   [100..139] for SCHED_NORMAL, [0..99] for FIFO/RT
  *
  * The binder driver supports inheriting the following scheduler policies:
  * SCHED_NORMAL
@@ -550,6 +550,7 @@ struct binder_thread {
 	spinlock_t prio_lock;
 	struct binder_priority prio_next;
 	enum binder_prio_state prio_state;
+	ANDROID_OEM_DATA(1);
 };
 
 /**

@@ -49,6 +49,7 @@
   __bitmap_clear
   __bitmap_complement
   __bitmap_equal
+  bitmap_find_next_zero_area_off
   bitmap_free
   bitmap_from_arr32
   __bitmap_or
@@ -57,6 +58,7 @@
   __bitmap_replace
   __bitmap_set
   __bitmap_subset
+  bitmap_to_arr32
   __bitmap_weight
   __bitmap_xor
   bitmap_zalloc
@@ -321,6 +323,7 @@
   device_attach
   device_create
   device_create_file
+  device_create_with_groups
   device_del
   device_destroy
   device_find_child
@@ -349,6 +352,7 @@
   device_remove_software_node
   device_rename
   __device_reset
+  __device_set_driver_override
   device_set_node
   device_set_of_node_from_dev
   device_set_wakeup_capable
@@ -640,6 +644,7 @@
   dma_resv_iter_first
   dma_resv_iter_next
   dma_resv_reserve_fences
+  dma_resv_wait_timeout
   dma_set_coherent_mask
   dma_set_mask
   __dma_sync_sg_for_cpu
@@ -698,6 +703,7 @@
   drm_atomic_helper_commit_modeset_disables
   drm_atomic_helper_commit_modeset_enables
   drm_atomic_helper_commit_planes
+  drm_atomic_helper_commit_tail
   drm_atomic_helper_commit_tail_rpm
   drm_atomic_helper_connector_destroy_state
   drm_atomic_helper_connector_duplicate_state
@@ -755,6 +761,7 @@
   drm_client_register
   drm_client_release
   drm_client_rotation
+  drm_color_ctm_s31_32_to_qm_n
   drm_compat_ioctl
   drm_connector_atomic_hdr_metadata_equal
   drm_connector_attach_colorspace_property
@@ -780,6 +787,7 @@
   drm_crtc_cleanup
   __drm_crtc_commit_free
   drm_crtc_commit_wait
+  drm_crtc_enable_color_mgmt
   drm_crtc_handle_vblank
   drm_crtc_init_with_planes
   drm_crtc_send_vblank_event
@@ -919,6 +927,7 @@
   drm_modeset_acquire_init
   drm_modeset_backoff
   drm_mode_set_config_internal
+  drm_mode_set_crtcinfo
   drm_modeset_drop_locks
   drm_modeset_lock
   drm_modeset_lock_all
@@ -1102,6 +1111,7 @@
   fwnode_graph_get_endpoint_by_id
   fwnode_graph_get_next_endpoint
   fwnode_graph_get_remote_endpoint
+  fwnode_graph_parse_endpoint
   fwnode_handle_get
   fwnode_irq_get_byname
   fwnode_mdio_find_device
@@ -1116,6 +1126,7 @@
   generic_device_group
   generic_file_llseek
   generic_handle_domain_irq
+  generic_handle_domain_irq_safe
   generic_handle_irq
   generic_shutdown_super
   genlmsg_multicast_allns
@@ -1130,9 +1141,12 @@
   genphy_c45_check_and_restart_aneg
   genphy_c45_fast_retrain
   genphy_c45_pma_read_abilities
+  genphy_c45_pma_read_ext_abilities
   genphy_c45_pma_resume
   genphy_c45_pma_setup_forced
   genphy_c45_pma_suspend
+  genphy_c45_read_eee_abilities
+  genphy_c45_read_lpa
   genphy_c45_read_status
   __genphy_config_aneg
   genphy_handle_interrupt_no_ack
@@ -1154,12 +1168,14 @@
   gen_pool_create
   gen_pool_destroy
   gen_pool_dma_alloc
+  gen_pool_dma_zalloc
   gen_pool_free_owner
   gen_pool_virt_to_phys
   get_cached_msi_msg
   get_cpu_device
   get_device
   get_device_system_crosststamp
+  get_file_active
   get_file_rcu
   get_net_ns_by_fd
   get_net_ns_by_pid
@@ -1198,6 +1214,7 @@
   gpiod_get_value
   gpiod_get_value_cansleep
   gpiod_is_active_low
+  gpiod_put
   gpiod_set_array_value_cansleep
   gpiod_set_consumer_name
   gpiod_set_raw_value
@@ -1285,6 +1302,19 @@
   i3cdev_to_dev
   i3c_driver_register_with_owner
   i3c_driver_unregister
+  i3c_generic_ibi_alloc_pool
+  i3c_generic_ibi_free_pool
+  i3c_generic_ibi_get_free_slot
+  i3c_generic_ibi_recycle_slot
+  i3c_master_add_i3c_dev_locked
+  i3c_master_disec_locked
+  i3c_master_do_daa
+  i3c_master_enec_locked
+  i3c_master_get_free_addr
+  i3c_master_queue_ibi
+  i3c_master_register
+  i3c_master_set_info
+  i3c_master_unregister
   icc_put
   icc_set_bw
   ida_alloc_range
@@ -1372,6 +1402,7 @@
   iommu_iova_to_phys
   __ioremap_prot
   iounmap
+  iov_iter_revert
   __iowrite32_copy_full
   __irq_alloc_descs
   __irq_alloc_domain_generic_chips
@@ -1814,6 +1845,8 @@
   of_irq_get
   of_irq_get_byname
   of_machine_compatible_match
+  of_machine_device_match
+  of_machine_get_match_data
   of_map_id
   of_match_device
   of_match_node
@@ -1950,6 +1983,7 @@
   pfifo_qdisc_ops
   pfn_is_map_memory
   phy_attached_info
+  phy_basic_ports_array
   phy_basic_t1_features
   phy_configure
   phy_connect
@@ -1973,6 +2007,7 @@
   phy_init_hw
   phylink_connect_phy
   phylink_create
+  phylink_decode_usxgmii_word
   phylink_destroy
   phylink_disconnect_phy
   phylink_ethtool_get_eee
@@ -2343,14 +2378,19 @@
   round_jiffies
   round_jiffies_relative
   round_jiffies_up
+  rpmsg_chrdev_eptdev_destroy
+  rpmsg_class
   rpmsg_create_channel
   rpmsg_create_ept
+  rpmsg_destroy_ept
   rpmsg_find_device
+  rpmsg_poll
   rpmsg_register_device
   rpmsg_register_device_override
   rpmsg_release_channel
   rpmsg_send
   rpmsg_sendto
+  rpmsg_trysendto
   rpmsg_unregister_device
   rproc_add
   rproc_add_carveout
@@ -2421,6 +2461,8 @@
   sdio_f0_readb
   sdio_f0_writeb
   sdio_get_host_pm_caps
+  sdio_memcpy_fromio
+  sdio_memcpy_toio
   sdio_readb
   sdio_readsb
   __sdio_register_driver
@@ -2801,6 +2843,7 @@
   trace_event_raw_init
   trace_event_reg
   trace_handle_return
+  __traceiter_android_vh_pci_pwrctrl_should_skip
   __traceiter_gpu_mem_total
   __traceiter_rwmmio_post_read
   __traceiter_rwmmio_post_write
@@ -2809,7 +2852,9 @@
   __traceiter_sched_set_state_tp
   __traceiter_xdp_exception
   trace_output_call
+  __tracepoint_android_vh_pci_pwrctrl_should_skip
   __tracepoint_gpu_mem_total
+  tracepoint_probe_register
   __tracepoint_rwmmio_post_read
   __tracepoint_rwmmio_post_write
   __tracepoint_rwmmio_read
@@ -2828,13 +2873,24 @@
   tso_build_data
   tso_build_hdr
   tso_start
+  __tty_alloc_driver
+  tty_driver_kref_put
   tty_flip_buffer_push
   tty_get_frame_size
   __tty_insert_flip_string_flags
   tty_kref_put
+  tty_port_close
+  tty_port_destroy
+  tty_port_init
+  tty_port_install
+  tty_port_open
   tty_port_tty_get
+  tty_prepare_flip_string
+  tty_register_driver
+  tty_std_termios
   tty_termios_baud_rate
   tty_termios_encode_baud_rate
+  tty_unregister_driver
   typec_mux_get_drvdata
   typec_mux_register
   typec_mux_unregister
@@ -2956,6 +3012,7 @@
   v4l2_ctrl_new_fwnode_properties
   v4l2_ctrl_new_int_menu
   v4l2_ctrl_new_std
+  v4l2_ctrl_new_std_compound
   v4l2_ctrl_new_std_menu
   v4l2_ctrl_new_std_menu_items
   v4l2_ctrl_poll
@@ -3150,6 +3207,7 @@
   vring_del_virtqueue
   vring_interrupt
   vring_new_virtqueue
+  vring_transport_features
   vscnprintf
   vsnprintf
   vsprintf

@@ -156,6 +156,13 @@ static int modify_irte(struct irq_2_iommu *irq_iommu,
 	iommu = irq_iommu->iommu;
 
 	index = irq_iommu->irte_index + irq_iommu->sub_handle;
+
+	if (pkvm_enabled()) {
+		rc = pkvm_modify_irte(iommu, index, irte_modified);
+		raw_spin_unlock_irqrestore(&irq_2_ir_lock, flags);
+		return rc;
+	}
+
 	irte = &iommu->ir_table->base[index];
 
 	if ((irte->pst == 1) || (irte_modified->pst == 1)) {
@@ -220,6 +227,21 @@ static int clear_entries(struct irq_2_iommu *irq_iommu)
 
 	iommu = irq_iommu->iommu;
 	index = irq_iommu->irte_index;
+
+	if (pkvm_enabled()) {
+		struct irte zero = { 0 };
+		int n = 1 << irq_iommu->irte_mask;
+		int i, rc = 0;
+
+		for (i = 0; i < n; i++) {
+			rc = pkvm_modify_irte(iommu, index + i, &zero);
+			if (rc)
+				break;
+		}
+		if (i)
+			bitmap_clear(iommu->ir_table->bitmap, index, i);
+		return rc;
+	}
 
 	start = iommu->ir_table->base + index;
 	end = start + (1 << irq_iommu->irte_mask);
@@ -999,6 +1021,10 @@ static void disable_irq_remapping(void)
 	struct dmar_drhd_unit *drhd;
 	struct intel_iommu *iommu = NULL;
 
+	/* pKVM doesn't support S3 suspend. */
+	if (WARN_ON(pkvm_enabled()))
+		return;
+
 	/*
 	 * Disable Interrupt-remapping for all the DRHD's now.
 	 */
@@ -1021,6 +1047,10 @@ static int reenable_irq_remapping(int eim)
 	struct dmar_drhd_unit *drhd;
 	bool setup = false;
 	struct intel_iommu *iommu = NULL;
+
+	/* pKVM doesn't support S3 resume. */
+	if (WARN_ON(pkvm_enabled()))
+		return -EOPNOTSUPP;
 
 	for_each_iommu(iommu, drhd)
 		if (iommu->qi)
