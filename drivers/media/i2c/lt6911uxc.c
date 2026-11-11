@@ -508,25 +508,24 @@ static const struct v4l2_subdev_ops lt6911uxc_subdev_ops = {
 static int lt6911uxc_get_fwnode_pad(struct media_entity *entity,
 				    struct fwnode_endpoint *endpoint)
 {
-	struct fwnode_handle *fwnode;
+	struct fwnode_handle *fwnode __free(fwnode_handle) =
+		fwnode_graph_get_port_parent(endpoint->local_fwnode);
 	struct v4l2_subdev *sd;
+	int ret = -ENXIO;
 
 	if (!is_media_entity_v4l2_subdev(entity))
 		return -EINVAL;
 
 	sd = media_entity_to_v4l2_subdev(entity);
 
-	fwnode = fwnode_graph_get_port_parent(endpoint->local_fwnode);
+	if (sd->dev && device_match_fwnode(sd->dev, fwnode))
+		ret = endpoint->port;
+	else if (sd->fwnode && !IS_ERR_OR_NULL(sd->fwnode->secondary) &&
+		 (sd->fwnode->secondary == fwnode ||
+		  sd->fwnode->secondary == endpoint->local_fwnode))
+		ret = endpoint->port;
 
-	if (device_match_fwnode(sd->dev, fwnode) ||
-	    (sd->fwnode && sd->fwnode->secondary == fwnode)) {
-		fwnode_handle_put(fwnode);
-		return endpoint->port;
-	}
-
-	fwnode_handle_put(fwnode);
-
-	return -ENXIO;
+	return ret;
 }
 
 static const struct media_entity_operations lt6911uxc_subdev_entity_ops = {
