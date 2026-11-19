@@ -798,7 +798,7 @@ static int ipu_isys_reset(struct ipu6_isys_video *self_av,
 
 	ipu6_cleanup_fw_msg_bufs(isys);
 
-	if (isys->fwcom) {
+	if (isys->fwctx) {
 		dev_err(dev, "Clearing old context\n");
 		ipu6_fw_isys_cleanup(isys);
 	}

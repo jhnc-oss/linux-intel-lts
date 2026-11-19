@@ -1667,12 +1667,12 @@ static int isys_isr_one(struct ipu6_bus_device *adev)
 	u64 ts;
 
 	dev_dbg(&adev->auxdev.dev, "%s enter", __func__);
-	if (!isys->fwcom) {
-		dev_dbg(&adev->auxdev.dev, "%s exit, fwcom is null", __func__);
+	if (!isys->fwctx) {
+		dev_dbg(&adev->auxdev.dev, "%s exit, fwctx is null", __func__);
 		return 1;
 	}
 
-	resp = ipu6_fw_isys_get_resp(isys->fwcom, IPU6_BASE_MSG_RECV_QUEUES);
+	resp = ipu6_fw_isys_get_resp(isys->fwctx, IPU6_BASE_MSG_RECV_QUEUES);
 	if (!resp) {
 		dev_dbg(&adev->auxdev.dev, "%s exit, resp is null", __func__);
 		return 1;
@@ -1784,7 +1784,7 @@ static int isys_isr_one(struct ipu6_bus_device *adev)
 
 	ipu6_isys_put_stream(stream);
 leave:
-	ipu6_fw_isys_put_resp(isys->fwcom, IPU6_BASE_MSG_RECV_QUEUES);
+	ipu6_fw_isys_put_resp(isys->fwctx, IPU6_BASE_MSG_RECV_QUEUES);
 	dev_dbg(&adev->auxdev.dev, "%s exit", __func__);
 	return 0;
 }

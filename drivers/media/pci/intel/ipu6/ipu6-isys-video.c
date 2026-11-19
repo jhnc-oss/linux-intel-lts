@@ -1230,7 +1230,7 @@ int ipu6_isys_fw_open(struct ipu6_isys *isys)
 	 */
 	ipu6_cleanup_fw_msg_bufs(isys);
 
-	if (isys->fwcom) {
+	if (isys->fwctx) {
 		/*
 		 * Something went wrong in previous shutdown. As we are now
 		 * restarting isys we can safely delete old context.
@@ -1264,7 +1264,7 @@ void ipu6_isys_fw_close(struct ipu6_isys *isys)
 	if (!isys->ref_count) {
 		ipu6_fw_isys_close(isys);
 #ifdef CONFIG_VIDEO_INTEL_IPU6_ISYS_RESET
-		if (isys->fwcom) {
+		if (isys->fwctx) {
 			mutex_lock(&isys->reset_mutex);
 			isys->need_reset = true;
 			mutex_unlock(&isys->reset_mutex);
