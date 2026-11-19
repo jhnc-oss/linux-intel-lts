@@ -56,9 +56,6 @@
 0029-nvme-set-ns-head-in-nvme_alloc_ns_head.patch
 0030-nvme-fix-racy-access-to-FDP-placement-id-array.patch
 
-#CVE-2026-97538
-0033-hwmon-asus_rog_ryujin-Validate-HID-report-lengths.patch
-
 #CVE-2026-98115
 0040-ksmbd-safely-drain-sessions-during-logoff.patch
 
@@ -101,9 +98,6 @@
 0093-Bluetooth-ISO-fix-race-of-kfree-vs-kref_get_unless_z.patch
 0094-Bluetooth-L2CAP-use-proto_lock-for-l2cap_data-to-fix.patch
 
-#CVE-2026-89788
-0117-ksmbd-fix-tree-connection-use-after-free-in-smb2_tre.patch
-
 #CVE-2026-89772
 0118-btrfs-write-protect-folios-during-data-writeback.patch
 
@@ -111,7 +105,6 @@
 0119-smb-client-reject-out-of-bounds-DataOffset-in-CIFSSM.patch
 
 #CVE-2026-93181
-0132-perf-x86-intel-uncore-Fix-PCI-PMU-cleanup-on-setup-f.patch
 0133-perf-x86-intel-uncore-Fix-refcnt-and-other-cleanups.patch
 0134-perf-x86-intel-uncore-Let-init_box-callback-report-f.patch
 0135-perf-x86-intel-uncore-Factor-out-box-setup-code.patch
@@ -149,7 +142,6 @@
 0011-wifi-mac80211-only-operate-on-TDLS-peers-in-the-TDLS.patch
 
 # CVE-2026-64160: helper, primary fix, mandatory CIFS follow-up
-0001-filemap-Add-folio_next_pos.patch
 0002-netfs-Fix-potential-for-tearing-in-remote_i_size-and.patch
 0003-cifs-Fix-undefined-variables.patch
 
@@ -184,13 +176,6 @@
 #CVE-2026-98599
 0005-bpf-Reject-non-negative-offsets-in-stack_slot_obj_ge.patch
 
-#CVE-2026-98715
-0006-KVM-SVM-Add-a-helper-to-detect-VMRUN-failures.patch
-0007-KVM-SVM-Preserve-TLB-control-i.e.-pending-TLB-flush-.patch
-
-#CVE-2026-98714
-0008-KVM-SVM-Update-control-fields-on-VMEXIT-if-and-only-.patch
-
 #CVE-2026-98800
 0009-bpf-Wait-for-an-RCU-tasks-grace-period-before-freein.patch
 
@@ -211,11 +196,6 @@
 
 #CVE-2026-74354
 0017-bpf-Take-mmap_lock-in-zap_pages.patch
-
-#CVE-2026-80668
-0018-netfilter-nf_conntrack_expect-use-conntrack-GC-to-re.patch
-0019-netfilter-nf_conntrack_expect-add-and-use-nf_ct_expe.patch
-0020-netfilter-ctnetlink-do-not-expose-expectation-DEAD-f.patch
 
 #CVE-2026-98983
 0001-unshare-don-t-drop-active-namespace-references-that-.patch
